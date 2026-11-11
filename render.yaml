@@ -1,0 +1,36 @@
+# Un seul service : le serveur Node compile et sert lui-même le jeu (client/dist).
+# Sur Render : New > Blueprint, choisis le dépôt, puis renseigne les variables « sync: false ».
+services:
+  - type: web
+    name: pixelrift
+    runtime: node
+    region: frankfurt
+    plan: free
+    buildCommand: cd client && npm install --include=dev && npm run build && cd ../server && npm install
+    startCommand: cd server && npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_SECRET
+        generateValue: true
+      # Mots de passe initiaux des comptes (changeables ensuite dans le jeu)
+      - key: ACCOUNT_TITOU_PWD
+        sync: false
+      - key: ACCOUNT_THOMAS_PWD
+        sync: false
+      - key: ACCOUNT_HUGO_PWD
+        sync: false
+      - key: ACCOUNT_LILOU_PWD
+        sync: false
+      - key: ACCOUNT_MATTEO_PWD
+        sync: false
+      # Facultatif : sauvegarde des comptes/profils dans un Gist GitHub PRIVÉ
+      # (le disque gratuit de Render est effacé à chaque redémarrage)
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_GIST_ID
+        sync: false
