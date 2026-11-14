@@ -139,7 +139,7 @@ export default function Loadout({ onClose, onSave }) {
 
         <div className="arsenal-body">
           <div className="arsenal-list">
-            {config.weapons.map((w) => {
+            {config.weapons.filter((w) => !w.loot).map((w) => {
               const slot = selected.indexOf(w.id);
               const s = weaponStats(w);
               return (

@@ -51,6 +51,8 @@ export function generateMap(spawns = DEFAULT_SPAWNS, seed = 20261021) {
     spawns,
     zones: [],      // pour debug / minimap
     pads: [],       // zones de gravité lunaire {x,z,y,r}
+    chests: [],     // coffres {x,y,z}
+    hills: [],      // collines du mode Roi de la colline {x,z,r}
   };
 
   // ---------- Occupation du sol (évite les chevauchements) ----------
@@ -558,6 +560,23 @@ export function generateMap(spawns = DEFAULT_SPAWNS, seed = 20261021) {
     [118, 100, 0], [0, -128, 0], [0, 140, 0],                // camping, relais routier, parc
   ];
   for (const [x, z, y] of PADS) out.pads.push({ x, z, y, r: 2.4 });
+
+  // =====================================================
+  // 7. COFFRES (v5) et COLLINES du mode « Roi de la colline »
+  // =====================================================
+  // Coffres sur les trottoirs des avenues (décalés de l'axe), puis sur les autoroutes de sortie
+  out.name = 'Ville Rift';
+  out.groundColor = null;
+  {
+    const MID = [-54, -18, 18, 54];
+    const spots = [];
+    for (const gx of [-72, -36, 0, 36, 72]) for (const mz of MID) spots.push([gx + 3.6, mz]);
+    // 14 des 20 emplacements, choisis de façon déterministe
+    const keep = spots.filter((_, i) => i % 10 !== 3 && i % 10 !== 8 && i % 10 !== 5);
+    for (const [x, z] of keep.slice(0, 14)) out.chests.push({ x, y: 0, z });
+    for (const [x, z] of [[135, 3.6], [-135, 3.6], [3.6, 135], [3.6, -135]]) out.chests.push({ x, y: 0, z });
+  }
+  out.hills = [[0, 18], [36, 36], [-36, -36], [72, -36], [-72, 36], [0, 72], [0, -72]].map(([x, z]) => ({ x, z, r: 7 }));
 
   return out;
 }

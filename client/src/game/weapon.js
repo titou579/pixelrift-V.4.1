@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { loadModel } from './assetLoader.js';
-import { GUN_FILES } from './assetCatalog.js';
+import { GUN_FILES, GUN_META } from './assetCatalog.js';
 import * as sound from './sound.js';
 
 // ============================================================
@@ -23,6 +23,20 @@ export const VIEW = {
   sawedoff: { len: 0.62, hip: [0.22, -0.22, -0.50] },
   dmr:      { len: 1.05, hip: [0.24, -0.23, -0.65] },
   sniper:   { len: 1.25, hip: [0.25, -0.24, -0.72] },
+  // --- armes à butin (coffres) ---
+  ak47:           { len: 0.92, hip: [0.24, -0.23, -0.60] },
+  tsmg:           { len: 0.52, hip: [0.22, -0.22, -0.46] },
+  magnum:         { len: 0.36, hip: [0.20, -0.20, -0.40] },
+  sci_pistol:     { len: 0.34, hip: [0.20, -0.20, -0.40] },
+  sci_smg:        { len: 0.60, hip: [0.22, -0.22, -0.48] },
+  combat_shotgun: { len: 1.00, hip: [0.24, -0.22, -0.64] },
+  sci_ar:         { len: 0.90, hip: [0.24, -0.23, -0.60] },
+  battle_rifle:   { len: 0.98, hip: [0.24, -0.23, -0.62] },
+  railgun:        { len: 1.20, hip: [0.25, -0.24, -0.70] },
+  gauss:          { len: 1.25, hip: [0.25, -0.24, -0.72] },
+  golden_smg:     { len: 0.58, hip: [0.22, -0.22, -0.48] },
+  plasma_elite:   { len: 0.95, hip: [0.24, -0.23, -0.62] },
+  hand_cannon:    { len: 0.38, hip: [0.20, -0.20, -0.40] },
 };
 const ADS_POS = [0, -0.125, -0.5];
 const BASE_FOV = 75;
@@ -43,7 +57,7 @@ function glowTexture() {
 }
 
 export function createWeaponSystem({
-  scene, camera, player, world, remotes, defs, loadout,
+  scene, camera, player, world, remotes, defs, loadout, showTargets = true,
   onShoot, onFired, onScope, onHitFeedback, onTargetHit, onWeaponChange,
 }) {
   const defById = new Map(defs.map((d) => [d.id, d]));
@@ -83,7 +97,11 @@ export function createWeaponSystem({
     let pivot;
     try {
       const raw = await loadModel(GUN_FILES[id]);
-      const inner = raw.clone(true);
+      const mesh = raw.clone(true);
+      // Certains packs ont le canon vers -X ou ±Z : on le tourne vers +X avant de mesurer
+      const inner = new THREE.Group();
+      inner.add(mesh);
+      inner.rotation.y = (GUN_META[id] && GUN_META[id].rotY) || 0;
       inner.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(inner);
       const size = box.getSize(new THREE.Vector3());
@@ -172,7 +190,7 @@ export function createWeaponSystem({
   // ---------- Cibles d'entraînement (sphères roses sur l'avenue centrale) ----------
   const targets = [];
   const tgeo = new THREE.IcosahedronGeometry(0.7, 0);
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < (showTargets ? 8 : 0); i++) {
     const m = new THREE.Mesh(
       tgeo,
       new THREE.MeshStandardMaterial({ color: 0xff2fb9, emissive: 0xff2fb9, emissiveIntensity: 0.6 })
@@ -221,6 +239,23 @@ export function createWeaponSystem({
     adsWanted = false;
     sound.playSwitch();
     applyActive(true);
+  }
+  // Arme trouvée dans un coffre : emplacement 5, remplace le butin précédent, mise en main immédiate
+  function giveLoot(id) {
+    const def = defById.get(id);
+    if (!def) return;
+    const slot = { def, ammo: def.mag, reloadEnd: 0, nextShotAt: 0, burstLeft: 0 };
+    if (slots.length > 4) slots[4] = slot; else slots.push(slot);
+    cancelReload();
+    index = 4;
+    adsWanted = false;
+    sound.playSwitch();
+    applyActive(true);
+  }
+  function clearLoot() {
+    if (slots.length <= 4) return;
+    slots.length = 4;
+    if (index >= 4) { index = 0; adsWanted = false; applyActive(true); }
   }
   function cycle(dir) {
     if (slots.length < 2) return;
@@ -508,7 +543,7 @@ export function createWeaponSystem({
     if (!s) return null;
     const t = now();
     return {
-      slots: slots.map((x) => ({ id: x.def.id, name: x.def.name })),
+      slots: slots.map((x) => ({ id: x.def.id, name: x.def.name, rarity: x.def.rarity || null })),
       index,
       name: s.def.name,
       ammo: s.ammo,
@@ -536,7 +571,7 @@ export function createWeaponSystem({
   ready.then(() => applyActive(false));
 
   return {
-    ready, update, remoteShot, setTracer(v) { tracerOverride = v; }, triggerDown, triggerUp, setAds, reload, select, cycle, setLoadout,
+    ready, update, remoteShot, setTracer(v) { tracerOverride = v; }, triggerDown, triggerUp, setAds, reload, select, cycle, setLoadout, giveLoot, clearLoot,
     getHud, getScore: () => score, dispose,
     resetAmmo() { slots.forEach((x) => { x.ammo = x.def.mag; x.reloadEnd = 0; }); },
   };

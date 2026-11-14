@@ -13,7 +13,9 @@ import { allSkins, allTracers, updateItem, addSkin, deleteImportedSkin, getItem 
 import { RARITIES, CURRENCY, PASS, REWARDS } from './economy.js';
 import { getSettings, updateSettings, startNewSeason } from './settings.js';
 import { jsonStore } from './store.js';
-import { WEAPONS, DEFAULT_LOADOUT, REGEN, SPAWNS, PLAYER_MAX_HP } from './weapons.js';
+import { WEAPONS, DEFAULT_LOADOUT, REGEN, SPAWNS, PLAYER_MAX_HP, RARITIES as LOOT_RARITIES, MODES, GG_LADDER } from './weapons.js';
+import { MAPS } from './maps.js';
+import { BOT_LEVELS } from './bots.js';
 
 const adminLog = jsonStore('adminlog.json', () => ({ entries: [] }));
 function logAdmin(user, action, detail = '') {
@@ -58,7 +60,11 @@ export function registerRoutes(app, game) {
 
   // ---------- Config de jeu (armes, spawns) ----------
   app.get('/api/game-config', (_req, res) => {
-    res.json({ weapons: Object.values(WEAPONS), defaultLoadout: DEFAULT_LOADOUT, regen: REGEN, maxHp: PLAYER_MAX_HP, spawns: SPAWNS });
+    res.json({
+      weapons: Object.values(WEAPONS), defaultLoadout: DEFAULT_LOADOUT, regen: REGEN, maxHp: PLAYER_MAX_HP, spawns: SPAWNS,
+      lootRarities: LOOT_RARITIES, maps: MAPS, modes: Object.values(MODES), ladder: GG_LADDER,
+      botLevels: Object.values(BOT_LEVELS).map((l) => ({ id: l.id, label: l.label })),
+    });
   });
 
   // ---------- Connexion ----------

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { loadModel, cloneModel } from './assetLoader.js';
-import { GUN_FILES } from './assetCatalog.js';
+import { GUN_FILES, GUN_META } from './assetCatalog.js';
 import { VIEW } from './weapon.js';
 
 // ============================================================
@@ -12,7 +12,7 @@ import { VIEW } from './weapon.js';
 // cinématique inverse pour le mannequin).
 // ============================================================
 
-const PISTOLS = new Set(['pistol', 'deagle', 'revolver']);
+const PISTOLS = new Set(['pistol', 'deagle', 'revolver', 'magnum', 'sci_pistol', 'hand_cannon']);
 export const holdClass = (weaponId) => (PISTOLS.has(weaponId) ? 'pistol' : 'rifle');
 
 // Cibles des mains par rapport au milieu des épaules (M), en longueurs de bras (A)
@@ -29,7 +29,9 @@ async function weaponModel(id) {
   if (!weaponCache.has(id)) {
     weaponCache.set(id, (async () => {
       const raw = await loadModel(GUN_FILES[id]);
-      const inner = raw.clone(true);
+      const inner = new THREE.Group();
+      inner.add(raw.clone(true));
+      inner.rotation.y = (GUN_META[id] && GUN_META[id].rotY) || 0;   // canon ramené vers +X
       inner.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(inner);
       const size = box.getSize(new THREE.Vector3());

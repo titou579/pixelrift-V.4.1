@@ -28,6 +28,20 @@ Il affiche une adresse `https://….trycloudflare.com` à envoyer à ton ami (el
 
 Pas besoin de GitHub ni de Render pour jouer. Les comptes sont sauvegardés dans `server/data/players.json` sur ton PC.
 
+## ✨ Nouveautés v5
+
+- **Bots** : l'hôte ajoute de 1 à 7 bots dans le salon, avec 4 niveaux (Recrue, Soldat, Vétéran, Élite : vitesse, temps de réaction, précision, cadence). Ils se déplacent en évitant les obstacles, ouvrent des coffres, capturent la colline, et un match peut démarrer avec un seul joueur humain. Code : `server/src/bots.js`.
+- **4 cartes** (choisies par l'hôte) : *Ville Rift* (la grande carte), *Entrepôt 17*, *Camp de survie*, *Zone Toon*. Code : `client/src/game/arenas.js` (données partagées par le client et le serveur) et `maps.js`.
+- **4 modes** : *Mêlée générale*, *Équipes*, *Course aux armes* (une arme de plus à chaque élimination, 9 niveaux) et *Roi de la colline* (tiens la zone seul pour marquer 1 point/s ; la zone change toutes les 45 s).
+- **Coffres à butin** (touche **F**) : 4 raretés (commun, rare, épique, légendaire), 13 armes **introuvables dans l'arsenal**, soin bonus, emplacement d'arme n° 5, butin perdu à la mort, coffres qui réapparaissent après 75 s. Réglage `Coffres à butin` dans le salon. Armes définies dans `server/src/weapons.js` (bloc `LOOT`).
+- **Micro ouvert en permanence** (M pour couper).
+
+### Ajouter une carte ou une arme
+
+- Carte : écrire une fonction dans `arenas.js` (même format que `generateMap`), l'ajouter à `ARENA_BUILDERS` et à `MAPS` dans `maps.js`. Le serveur la lit automatiquement.
+- Arme à butin : ajouter l'entrée dans `LOOT` (`weapons.js`), le modèle dans `client/public/models/guns2/`, puis `GUN_FILES` / `GUN_META` (rotation du canon) dans `assetCatalog.js` et `VIEW` dans `weapon.js`.
+- Les modèles des packs sont normalisés à une taille réelle (`h` ou `len` dans `assetCatalog.js`) : ajuste ces valeurs si un objet te paraît trop grand ou trop petit.
+
 ## Commandes
 
 | Touche | Action |
@@ -35,10 +49,11 @@ Pas besoin de GitHub ni de Render pour jouer. Les comptes sont sauvegardés dans
 | ZQSD / flèches | Se déplacer (les marches et bordures jusqu'à 50 cm s'enjambent) |
 | Espace / Shift | Sauter / courir |
 | C (en courant) | Glisser : élan rapide, caméra basse, fonctionne aussi pour esquiver |
-| V (maintenu) | Parler (chat vocal, volume selon la distance) |
+| M | Couper / rétablir le micro (le micro est **ouvert en permanence** ; mode « appuyer pour parler » avec V dans le menu pause) |
+| F | Ouvrir un coffre à butin (à moins de 4 m) |
 | Clic gauche / clic droit | Tirer / viser (zoom + précision, lunette pour le sniper) |
 | R | Recharger |
-| 1 à 4 / molette | Changer d'arme |
+| 1 à 4 / molette | Changer d'arme (5 = arme trouvée dans un coffre) |
 | E | Rift (téléportation) |
 | Tab | Scores |
 | F3 | Afficher / cacher le compteur de FPS |

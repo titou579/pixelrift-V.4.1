@@ -132,7 +132,7 @@ export default function Lobby({ user, roomCode: initialRoom, onPlay, onRoomChang
   // ----- Rangée d'opérateurs du salon -----
   const squad = useMemo(() => {
     if (!room || !catalogReady) return [];
-    const list = [...room.players];
+    const list = room.players.filter((p) => !p.isBot);
     if (teamMode) list.sort((a, b) => a.team - b.team || a.username.localeCompare(b.username));
     return list.map((p) => ({
       key: p.id,
@@ -146,6 +146,18 @@ export default function Lobby({ user, roomCode: initialRoom, onPlay, onRoomChang
 
   const teamCounts = room ? [0, 1].map((t) => room.players.filter((p) => p.team === t).length) : [0, 0];
   const canTeamStart = !teamMode || (teamCounts[0] > 0 && teamCounts[1] > 0);
+
+  const modeInfo = room ? (room.modes || []).find((m) => m.id === room.mode) : null;
+  const mapInfo = room ? (room.maps || []).find((m) => m.id === room.map) : null;
+  const botCount = room ? room.players.filter((p) => p.isBot).length : 0;
+  const botLabel = room && room.bots ? (room.bots.levels.find((l) => l.id === room.bots.level) || {}).label : '';
+  let modeSummary = '';
+  if (room) {
+    const goal = room.mode === 'gungame' ? 'termine l’échelle des armes'
+      : room.mode === 'koth' ? `premier à ${room.killTarget} points`
+        : `premier à ${room.killTarget} éliminations${teamMode ? ' (par équipe)' : ''}`;
+    modeSummary = `${modeInfo ? modeInfo.name : ''} · ${mapInfo ? mapInfo.name : ''} · ${goal}${botCount ? ` · ${botCount} bot${botCount > 1 ? 's' : ''} (${botLabel})` : ''}`;
+  }
 
   // =====================================================================
   //  MENU PRINCIPAL
@@ -176,7 +188,7 @@ export default function Lobby({ user, roomCode: initialRoom, onPlay, onRoomChang
           <nav className="menu-list">
             <button className="menu-item primary" onClick={createRoom} disabled={connecting}>
               Créer un salon
-              <small>Solo ou en équipes avec tes amis</small>
+              <small>Solo, équipes, bots, coffres et 4 cartes</small>
             </button>
             <div className="menu-join">
               <input
@@ -209,7 +221,8 @@ export default function Lobby({ user, roomCode: initialRoom, onPlay, onRoomChang
               <span><span className="kbd">Clic</span></span><span>Tirer · <span className="kbd">Clic D.</span> viser</span>
               <span><span className="kbd">C</span></span><span>Glisser en courant</span>
               <span><span className="kbd">E</span></span><span>Rift (téléportation)</span>
-              <span><span className="kbd">V</span></span><span>Parler (chat vocal)</span>
+              <span><span className="kbd">F</span></span><span>Ouvrir un coffre</span>
+              <span><span className="kbd">M</span></span><span>Micro (ouvert en permanence)</span>
             </div>
           </aside>
         </main>
@@ -233,7 +246,7 @@ export default function Lobby({ user, roomCode: initialRoom, onPlay, onRoomChang
         <div>
           <div className="stamp">Salle de préparation</div>
           <div className="room-code">{room.code}</div>
-          <p className="muted small">{teamMode ? 'Équipes · Alpha contre Bravo' : 'Chacun pour soi'} · premier à {room.killTarget} éliminations{teamMode ? ' (par équipe)' : ''}</p>
+          <p className="muted small">{modeSummary}</p>
         </div>
         <div className="room-top-actions">
           <button className="small-btn" onClick={copyCode}><Icon name={copied ? 'check' : 'copy'} size={16} /> {copied ? 'Code copié !' : 'Copier le code'}</button>
@@ -256,18 +269,51 @@ export default function Lobby({ user, roomCode: initialRoom, onPlay, onRoomChang
           <div className="stamp" style={{ color: 'var(--accent)' }}>Réglages</div>
           {isHost ? (
             <>
-              <div className="seg">
-                <button className={!teamMode ? 'on' : ''} onClick={() => socket.emit('room:setMode', { mode: 'ffa' })}><Icon name="user" size={16} /> Solo</button>
-                <button className={teamMode ? 'on' : ''} onClick={() => socket.emit('room:setMode', { mode: 'team' })}><Icon name="users" size={16} /> Équipes</button>
-              </div>
+              <p className="muted small">Mode de jeu</p>
               <div className="chips">
-                {room.targets.map((t) => (
-                  <button key={t} className={`chip ${room.killTarget === t ? 'on' : ''}`} onClick={() => socket.emit('room:setTarget', { target: t })}>{t} kills</button>
+                {(room.modes || []).map((m) => (
+                  <button key={m.id} className={`chip ${room.mode === m.id ? 'on' : ''}`} title={m.desc} onClick={() => socket.emit('room:setMode', { mode: m.id })}>{m.name}</button>
                 ))}
+              </div>
+              {modeInfo && <p className="muted small">{modeInfo.desc}</p>}
+              {room.targets.length > 0 && (
+                <div className="chips">
+                  {room.targets.map((t) => (
+                    <button key={t} className={`chip ${room.killTarget === t ? 'on' : ''}`} onClick={() => socket.emit('room:setTarget', { target: t })}>{t} {room.mode === 'koth' ? 'pts' : 'kills'}</button>
+                  ))}
+                </div>
+              )}
+
+              <p className="muted small">Carte</p>
+              <div className="chips">
+                {(room.maps || []).map((m) => (
+                  <button key={m.id} className={`chip ${room.map === m.id ? 'on' : ''}`} title={m.desc} onClick={() => socket.emit('room:setMap', { map: m.id })}>{m.name}</button>
+                ))}
+              </div>
+              {mapInfo && <p className="muted small">{mapInfo.size} · {mapInfo.desc}</p>}
+
+              <p className="muted small">Bots ({botCount}/{room.bots.max})</p>
+              <div className="chips">
+                {[0, 1, 2, 3, 5, 7].filter((n) => n <= room.bots.max).map((n) => (
+                  <button key={n} className={`chip ${botCount === n ? 'on' : ''}`} onClick={() => socket.emit('room:setBots', { count: n })}>{n === 0 ? 'Aucun' : n}</button>
+                ))}
+              </div>
+              {botCount > 0 && (
+                <div className="chips">
+                  {room.bots.levels.map((l) => (
+                    <button key={l.id} className={`chip ${room.bots.level === l.id ? 'on' : ''}`} onClick={() => socket.emit('room:setBots', { level: l.id })}>{l.label}</button>
+                  ))}
+                </div>
+              )}
+
+              <div className="seg">
+                <button className={room.chestsOn ? 'on' : ''} disabled={room.mode === 'gungame'} onClick={() => socket.emit('room:setChests', { on: !room.chestsOn })}>
+                  Coffres à butin : {room.mode === 'gungame' ? 'désactivés (mode)' : room.chestsOn ? 'activés' : 'désactivés'}
+                </button>
               </div>
             </>
           ) : (
-            <p className="muted small">Seul l'hôte ({room.players.find((p) => p.id === room.host)?.username}) change les réglages.</p>
+            <p className="muted small">Seul l'hôte ({room.players.find((p) => p.id === room.host)?.username}) change les réglages.<br />{modeSummary}</p>
           )}
 
           {teamMode && me && (
@@ -294,6 +340,7 @@ export default function Lobby({ user, roomCode: initialRoom, onPlay, onRoomChang
                 <span>{p.username}</span>
                 {p.id === socket.id && <span className="you">(toi)</span>}
                 {p.isHost && <span className="badge">HÔTE</span>}
+                {p.isBot && <span className="badge">BOT · {(room.bots.levels.find((l) => l.id === p.botLevel) || {}).label}</span>}
                 {isHost && p.id !== socket.id && (
                   <button className="mini danger" title="Expulser" onClick={() => socket.emit('room:kick', { id: p.id })}><Icon name="close" size={12} /></button>
                 )}

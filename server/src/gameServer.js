@@ -2,7 +2,6 @@ import {
   applyMatchRewards,
   registerRiftUse,
   getOrCreateProfile,
-  getDisplayName,
   setLoadout as saveLoadout,
 } from './dataManager.js';
 import { getTracer, getSkin } from './catalog.js';
@@ -15,15 +14,23 @@ import {
   pickSpawn,
   isValidLoadout,
   computeDamage,
+  MODES,
+  GG_LADDER,
+  rollLoot,
 } from './weapons.js';
+import { getMap, MAPS, DEFAULT_MAP, MAP_IDS } from './maps.js';
+import { BOT_LEVELS, MAX_BOTS, createBot, equipBot, resetBot, tickBots } from './bots.js';
 
 const rooms = new Map();
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const MATCH_DURATION = 5 * 60 * 1000;
 const END_SCREEN_DURATION = 10000;
 const GHOST_TIMEOUT = 5000;
-export const KILL_TARGETS = [10, 15, 25, 40];
-const DEFAULT_TARGET = { ffa: 15, team: 25 };
+const CHEST_RESPAWN_MS = 75 * 1000;
+const CHEST_REACH = 6;            // distance max (m) pour ouvrir un coffre (marge pour la latence)
+const HILL_DURATION_MS = 45 * 1000;
+const BOT_RESPAWN_MS = 3000;
+export const KILL_TARGETS = MODES.ffa.targets;
 export const TEAM_NAMES = ['Alpha', 'Bravo'];
 
 function generateCode() {
@@ -45,21 +52,32 @@ function createRoom(hostId) {
     matchStartTime: 0,
     host: hostId,
     mode: 'ffa',
-    killTarget: DEFAULT_TARGET.ffa,
+    killTarget: MODES.ffa.defaultTarget,
+    map: DEFAULT_MAP,
+    botsCount: 0,
+    botsLevel: 2,
+    botSeq: 0,
+    chestsOn: true,
+    chests: [],
+    koth: null,
+    kothPts: new Map(),
   };
 }
+
+const humans = (room) => Array.from(room.players.values()).filter((p) => !p.isBot);
 
 // Ce que les autres joueurs ont le droit de voir
 function lobbyView(p, room) {
   return {
-    id: p.id, login: p.login, username: p.username, skin: p.skin, tracer: p.tracer,
+    id: p.id, login: p.isBot ? undefined : p.login, username: p.username, skin: p.skin, tracer: p.tracer,
     team: p.team, weaponId: p.weaponId, level: p.level, inGame: p.inGame, isHost: room.host === p.id,
+    isBot: !!p.isBot, botLevel: p.isBot ? p.botLevel : undefined,
   };
 }
 function gameView(p) {
   return {
-    id: p.id, login: p.login, username: p.username, position: p.position, rotation: p.rotation,
-    skin: p.skin, team: p.team, weaponId: p.weaponId, hp: p.hp, alive: p.alive,
+    id: p.id, login: p.isBot ? undefined : p.login, username: p.username, position: p.position, rotation: p.rotation,
+    skin: p.skin, team: p.team, weaponId: p.weaponId, hp: p.hp, alive: p.alive, isBot: !!p.isBot,
   };
 }
 function tracerColor(id) {
@@ -67,14 +85,21 @@ function tracerColor(id) {
   if (!t || t.color === null || t.color === undefined) return null;
   return t.color;
 }
+// Une arme est utilisable si elle est dans l'arsenal du joueur ou si c'est son arme de butin
+const canUse = (p, id) => p.loadout.includes(id) || p.lootWeapon === id;
 
 export function setupGameServer(io) {
   const roomState = (code) => {
     const room = rooms.get(code);
     if (!room) return null;
+    const mode = MODES[room.mode];
     return {
       code, host: room.host, mode: room.mode, killTarget: room.killTarget,
-      status: room.matchStatus, teamNames: TEAM_NAMES, targets: KILL_TARGETS,
+      status: room.matchStatus, teamNames: TEAM_NAMES, targets: mode.targets,
+      modes: Object.values(MODES).map((m) => ({ id: m.id, name: m.name, desc: m.desc })),
+      map: room.map, maps: MAPS,
+      bots: { count: room.botsCount, level: room.botsLevel, max: MAX_BOTS, levels: Object.values(BOT_LEVELS).map((l) => ({ id: l.id, label: l.label })) },
+      chestsOn: room.chestsOn && room.mode !== 'gungame',
       players: Array.from(room.players.values()).map((p) => lobbyView(p, room)),
     };
   };
@@ -83,21 +108,121 @@ export function setupGameServer(io) {
     if (st) io.to(code).emit('room:state', st);
   };
 
+  const scoreRows = (room) => Array.from(room.players.values()).map((p) => ({
+    id: p.id, username: p.username, team: p.team, isBot: !!p.isBot,
+    kills: room.scores.get(p.id) || 0, deaths: room.deaths.get(p.id) || 0,
+    points: room.kothPts.get(p.id) || 0, gg: p.ggLevel || 0,
+  }));
+
   function broadcastScores(code) {
     const room = rooms.get(code);
     if (!room) return;
-    const list = Array.from(room.players.values()).map((p) => ({
-      id: p.id, username: p.username, team: p.team,
-      kills: room.scores.get(p.id) || 0, deaths: room.deaths.get(p.id) || 0,
-    }));
-    io.to(code).emit('scores:update', list);
-    io.to(code).emit('teams:update', { teamKills: room.teamKills, mode: room.mode, killTarget: room.killTarget });
+    io.to(code).emit('scores:update', scoreRows(room));
+    io.to(code).emit('teams:update', {
+      teamKills: room.teamKills, mode: room.mode, killTarget: room.killTarget, ladder: GG_LADDER.length,
+    });
   }
 
-  // Un match peut-il démarrer ? (2 joueurs en jeu ; en équipes : au moins un par équipe)
+  // ---------- Coffres ----------
+  const chestsPublic = (room) => room.chests.map((c) => ({ id: c.id, x: c.x, y: c.y, z: c.z, opened: c.opened }));
+  function resetChests(room) {
+    const map = getMap(room.map);
+    room.chests = room.chestsOn && room.mode !== 'gungame'
+      ? map.chests.map((c) => ({ id: c.id, x: c.x, y: c.y, z: c.z, opened: false, respawnAt: 0 }))
+      : [];
+  }
+  function openChest(code, room, p, chest) {
+    if (!chest || chest.opened || !p.alive) return false;
+    chest.opened = true;
+    chest.respawnAt = Date.now() + CHEST_RESPAWN_MS;
+    const loot = rollLoot();
+    p.lootWeapon = loot.weaponId;
+    p.hp = Math.min(PLAYER_MAX_HP, p.hp + loot.heal);
+    io.to(code).emit('player:hp', { id: p.id, hp: Math.round(p.hp), regen: true });
+    io.to(code).emit('chest:opened', { id: chest.id, by: p.id, byName: p.username, weaponId: loot.weaponId, rarity: loot.rarity });
+    if (p.isBot) equipBot(p, room, { io, code }, true);
+    else io.to(p.id).emit('loot:granted', { weaponId: loot.weaponId, rarity: loot.rarity, heal: loot.heal });
+    return true;
+  }
+  function nearestChest(room, p, maxDist) {
+    let best = null, bd = maxDist;
+    for (const c of room.chests) {
+      if (c.opened) continue;
+      const d = Math.hypot(c.x - p.position.x, c.z - p.position.z);
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
+  }
+
+  // ---------- Roi de la colline ----------
+  function rotateHill(room) {
+    const map = getMap(room.map);
+    if (!map.hills.length) { room.koth = null; return; }
+    let idx;
+    do { idx = Math.floor(Math.random() * map.hills.length); } while (map.hills.length > 1 && room.koth && idx === room.koth.idx);
+    const h = map.hills[idx];
+    room.koth = { idx, x: h.x, z: h.z, r: h.r, endsAt: Date.now() + HILL_DURATION_MS };
+  }
+  const kothPublic = (room) => room.koth && {
+    x: room.koth.x, z: room.koth.z, r: room.koth.r, timeLeft: Math.max(0, room.koth.endsAt - Date.now()),
+    target: room.killTarget, points: Object.fromEntries(room.kothPts),
+  };
+
+  // ---------- Course aux armes ----------
+  function giveGungameWeapon(room, code, p) {
+    const w = GG_LADDER[Math.min(p.ggLevel, GG_LADDER.length - 1)];
+    p.loadout = [w];
+    p.weaponId = w;
+    p.lootWeapon = null;
+    if (p.isBot) equipBot(p, room, { io, code }, true);
+    else io.to(p.id).emit('loadout:forced', { loadout: [w], level: p.ggLevel, ladder: GG_LADDER.length });
+  }
+
+  // ---------- Bots ----------
+  function syncBots(code) {
+    const room = rooms.get(code);
+    if (!room || room.matchStatus === 'playing') return;
+    const map = getMap(room.map);
+    const want = Math.max(0, Math.min(MAX_BOTS, room.botsCount));
+    const bots = Array.from(room.players.values()).filter((p) => p.isBot);
+    while (bots.length > want) {
+      const b = bots.pop();
+      room.players.delete(b.id); room.scores.delete(b.id); room.deaths.delete(b.id);
+      io.to(code).emit('player:left', { id: b.id });
+    }
+    while (bots.length < want) {
+      const c = [0, 0];
+      for (const q of room.players.values()) c[q.team]++;
+      const team = c[0] <= c[1] ? 0 : 1;
+      const taken = Array.from(room.players.values()).map((q) => q.position);
+      const sp = pickSpawn(taken, room.mode === 'team' ? team : null, map.spawns);
+      const b = createBot(room, code, room.botSeq++, room.botsLevel, team, sp);
+      equipBot(b, room, null, false);
+      room.players.set(b.id, b); room.scores.set(b.id, 0); room.deaths.set(b.id, 0);
+      io.to(code).emit('player:joined', gameView(b));
+      bots.push(b);
+    }
+    for (const b of bots) { b.botLevel = room.botsLevel; b.level = room.botsLevel * 8; }
+    broadcastScores(code);
+    broadcastRoom(code);
+  }
+
+  function scheduleBotRespawn(code, room, bot) {
+    setTimeout(() => {
+      if (!rooms.has(code) || room.matchStatus !== 'playing' || bot.alive || !room.players.has(bot.id)) return;
+      const map = getMap(room.map);
+      const others = Array.from(room.players.values()).filter((o) => o.id !== bot.id && o.alive).map((o) => o.position);
+      const sp = pickSpawn(others, room.mode === 'team' ? bot.team : null, map.spawns);
+      resetBot(bot, room, { io, code }, sp);
+      io.to(code).emit('player:respawned', { id: bot.id, position: bot.position });
+    }, BOT_RESPAWN_MS);
+  }
+
+  // Un match peut-il démarrer ? (2 participants en jeu, bots compris ; en équipes : au moins un par équipe)
   function canStart(room) {
     const inGame = Array.from(room.players.values()).filter((x) => x.inGame);
     if (inGame.length < 2) return false;
+    if (!inGame.some((x) => !x.isBot)) return false;
     if (room.mode === 'team') return inGame.some((x) => x.team === 0) && inGame.some((x) => x.team === 1);
     return true;
   }
@@ -105,11 +230,16 @@ export function setupGameServer(io) {
   function startMatch(code) {
     const room = rooms.get(code);
     if (!room) return;
+    const map = getMap(room.map);
     room.matchStatus = 'playing';
     room.matchStartTime = Date.now();
     room.scores.clear();
     room.deaths.clear();
+    room.kothPts.clear();
     room.teamKills = [0, 0];
+    resetChests(room);
+    room.koth = null;
+    if (room.mode === 'koth') rotateHill(room);
     const taken = [];
     for (const p of room.players.values()) {
       room.scores.set(p.id, 0);
@@ -119,44 +249,50 @@ export function setupGameServer(io) {
       p.lastCombat = 0;
       p.matchHeadshots = 0;
       p.matchJoinedAt = Date.now();
-      p.position = pickSpawn(taken, room.mode === 'team' ? p.team : null);
+      p.ggLevel = 0;
+      p.lootWeapon = null;
+      p.position = pickSpawn(taken, room.mode === 'team' ? p.team : null, map.spawns);
       taken.push(p.position);
-      io.to(p.id).emit('player:respawned', { id: p.id, position: p.position });
+      if (room.mode === 'gungame') giveGungameWeapon(room, code, p);
+      else if (p.isBot) resetBot(p, room, { io, code }, p.position);
+      if (!p.isBot) io.to(p.id).emit('player:respawned', { id: p.id, position: p.position });
     }
     const teams = {};
     for (const p of room.players.values()) teams[p.id] = p.team;
     io.to(code).emit('match:started', {
-      duration: MATCH_DURATION, killTarget: room.killTarget, mode: room.mode, teams,
+      duration: MATCH_DURATION, killTarget: room.killTarget, mode: room.mode, teams, map: room.map,
+      ladder: GG_LADDER.length,
     });
+    io.to(code).emit('chests:state', { chests: chestsPublic(room) });
+    if (room.koth) io.to(code).emit('koth:state', kothPublic(room));
     broadcastScores(code);
     broadcastRoom(code);
-    console.log(`🎮 Match démarré dans ${code} (${room.mode})`);
+    console.log(`🎮 Match démarré dans ${code} (${room.mode}, ${map.name}, ${Array.from(room.players.values()).filter((p) => p.isBot).length} bots)`);
   }
 
-  function endMatch(code) {
+  function endMatch(code, forcedWinnerId = null) {
     const room = rooms.get(code);
     if (!room || room.matchStatus !== 'playing') return;
     room.matchStatus = 'ended';
     const teamMode = room.mode === 'team';
 
-    const list = Array.from(room.players.values())
-      .map((p) => ({
-        id: p.id, username: p.username, team: p.team,
-        kills: room.scores.get(p.id) || 0, deaths: room.deaths.get(p.id) || 0,
-      }))
-      .sort((a, b) => b.kills - a.kills);
+    const rows = scoreRows(room);
+    const sortKey = (r) => (room.mode === 'koth' ? r.points * 1000 + r.kills : room.mode === 'gungame' ? r.gg * 1000 + r.kills : r.kills);
+    const list = rows.sort((a, b) => sortKey(b) - sortKey(a));
 
     // Vainqueur : équipe ayant le plus d'éliminations, ou joueur en tête (égalité = pas de vainqueur)
     let winnerTeam = null;
     let winnerId = null;
     if (teamMode) {
       if (room.teamKills[0] !== room.teamKills[1]) winnerTeam = room.teamKills[0] > room.teamKills[1] ? 0 : 1;
-    } else if (list.length && (list.length === 1 || list[0].kills > list[1].kills)) {
+    } else if (forcedWinnerId) {
+      winnerId = forcedWinnerId;
+    } else if (list.length && (list.length === 1 || sortKey(list[0]) > sortKey(list[1]))) {
       winnerId = list[0].id;
     }
 
     for (const p of room.players.values()) {
-      if (!p.inGame) continue;
+      if (!p.inGame || p.isBot) continue;
       const isWinner = teamMode ? p.team === winnerTeam : p.id === winnerId;
       const rewards = applyMatchRewards(p.login, {
         kills: room.scores.get(p.id) || 0,
@@ -180,19 +316,29 @@ export function setupGameServer(io) {
     });
     const who = teamMode
       ? (winnerTeam === null ? '—' : `équipe ${TEAM_NAMES[winnerTeam]}`)
-      : (getDisplayName(room.players.get(winnerId)?.login) || '—');
+      : (room.players.get(winnerId)?.username || '—');
     console.log(`🏆 Match terminé dans ${code} — ${who}`);
 
     setTimeout(() => {
       if (!rooms.has(code)) return;
       room.matchStatus = 'waiting';
+      room.koth = null;
+      resetChests(room);
+      const map = getMap(room.map);
       const taken = [];
       for (const p of room.players.values()) {
         p.hp = PLAYER_MAX_HP;
         p.alive = true;
         p.lastCombat = 0;
-        p.position = pickSpawn(taken, teamMode ? p.team : null);
+        p.lootWeapon = null;
+        p.ggLevel = 0;
+        p.position = pickSpawn(taken, teamMode ? p.team : null, map.spawns);
         taken.push(p.position);
+        if (!p.isBot) {
+          p.loadout = [...(p.baseLoadout || DEFAULT_LOADOUT)];
+          p.weaponId = p.loadout[0];
+          io.to(p.id).emit('loadout:restore', { loadout: p.loadout });
+        }
       }
       io.to(code).emit('match:reset');
       broadcastRoom(code);
@@ -204,6 +350,32 @@ export function setupGameServer(io) {
   setInterval(() => {
     for (const [code, room] of rooms) {
       if (room.matchStatus === 'playing' && Date.now() - room.matchStartTime >= MATCH_DURATION) endMatch(code);
+    }
+  }, 1000);
+
+  // Roi de la colline : points chaque seconde, rotation de la zone ; réapparition des coffres
+  setInterval(() => {
+    const now = Date.now();
+    for (const [code, room] of rooms) {
+      if (room.matchStatus !== 'playing') continue;
+      for (const c of room.chests) {
+        if (c.opened && now >= c.respawnAt) { c.opened = false; io.to(code).emit('chest:respawn', { id: c.id }); }
+      }
+      if (room.mode === 'koth' && room.koth) {
+        if (now >= room.koth.endsAt) rotateHill(room);
+        const inside = Array.from(room.players.values()).filter((p) => p.alive && p.inGame
+          && Math.hypot(p.position.x - room.koth.x, p.position.z - room.koth.z) < room.koth.r);
+        let winner = null;
+        if (inside.length === 1) {
+          const p = inside[0];
+          const pts = (room.kothPts.get(p.id) || 0) + 1;
+          room.kothPts.set(p.id, pts);
+          if (pts >= room.killTarget) winner = p.id;
+        }
+        io.to(code).emit('koth:state', { ...kothPublic(room), occupant: inside.length === 1 ? inside[0].id : null, contested: inside.length > 1 });
+        if (inside.length === 1) broadcastScores(code);
+        if (winner) endMatch(code, winner);
+      }
     }
   }, 1000);
 
@@ -222,15 +394,69 @@ export function setupGameServer(io) {
     }
   }, REGEN.tickMs);
 
+  // ---------- Dégâts et éliminations (joueurs ET bots) ----------
+  // Retourne true si le match vient de se terminer.
+  function applyDamage(code, room, shooter, target, damage, weaponId, head) {
+    if (!target.alive || room.matchStatus !== 'playing') return false;
+    const now = Date.now();
+    target.hp -= damage;
+    target.lastCombat = now;
+    io.to(code).emit('player:hit', {
+      targetId: target.id,
+      hp: Math.max(0, Math.round(target.hp)),
+      shooterId: shooter.id,
+      shooterName: shooter.username,
+      damage,
+      head,
+    });
+    if (target.hp > 0) return false;
+
+    target.alive = false;
+    target.hp = 0;
+    target.lootWeapon = null;
+    room.scores.set(shooter.id, (room.scores.get(shooter.id) || 0) + 1);
+    room.deaths.set(target.id, (room.deaths.get(target.id) || 0) + 1);
+    if (head) shooter.matchHeadshots = (shooter.matchHeadshots || 0) + 1;
+    if (room.mode === 'team') room.teamKills[shooter.team]++;
+
+    io.to(code).emit('player:died', {
+      id: target.id,
+      username: target.username,
+      killerName: shooter.username,
+      killerId: shooter.id,
+      killerTeam: shooter.team,
+      victimTeam: target.team,
+      weaponId,
+      head,
+    });
+    if (target.isBot) scheduleBotRespawn(code, room, target);
+
+    // Course aux armes : arme suivante, ou victoire si c'était la dernière
+    let ggWin = false;
+    if (room.mode === 'gungame') {
+      if (shooter.ggLevel >= GG_LADDER.length - 1) ggWin = true;
+      else { shooter.ggLevel++; giveGungameWeapon(room, code, shooter); }
+    }
+    broadcastScores(code);
+
+    const reached = room.mode === 'team'
+      ? room.teamKills[shooter.team] >= room.killTarget
+      : room.mode === 'ffa' && (room.scores.get(shooter.id) || 0) >= room.killTarget;
+    if (ggWin) { endMatch(code, shooter.id); return true; }
+    if (reached) { endMatch(code); return true; }
+    return false;
+  }
+
   function removePlayer(code, socketId) {
     const room = rooms.get(code);
     if (!room) return;
     room.players.delete(socketId);
     room.scores.delete(socketId);
     room.deaths.delete(socketId);
+    room.kothPts.delete(socketId);
     io.to(code).emit('player:left', { id: socketId });
-    if (room.players.size === 0) { rooms.delete(code); return; }
-    if (room.host === socketId) room.host = room.players.keys().next().value; // nouvel hôte
+    if (humans(room).length === 0) { rooms.delete(code); return; } // plus d'humains : le salon (et ses bots) disparaît
+    if (room.host === socketId) room.host = humans(room)[0].id;     // nouvel hôte
     broadcastScores(code);
     broadcastRoom(code);
   }
@@ -240,6 +466,7 @@ export function setupGameServer(io) {
     const now = Date.now();
     for (const [code, room] of rooms) {
       for (const [socketId, p] of Array.from(room.players)) {
+        if (p.isBot) continue;
         if (p.inGame && p.lastSeen && now - p.lastSeen > GHOST_TIMEOUT) {
           console.log(`🧹 Fantôme supprimé : ${p.login} (${socketId})`);
           removePlayer(code, socketId);
@@ -247,6 +474,18 @@ export function setupGameServer(io) {
       }
     }
   }, 3000);
+
+  // 🤖 Intelligence des bots : 20 fois par seconde dans les salles en match
+  const botCtx = { io, applyDamage, openChest, nearestChest };
+  setInterval(() => {
+    for (const [code, room] of rooms) {
+      if (room.matchStatus !== 'playing') continue;
+      let hasBot = false;
+      for (const p of room.players.values()) if (p.isBot) { hasBot = true; break; }
+      if (!hasBot) continue;
+      try { tickBots(code, room, getMap(room.map), botCtx); } catch (e) { console.error('Erreur bots', e); }
+    }
+  }, 50);
 
   // ---------- Identité : le serveur ne croit que la session (cookie) ----------
   io.on('connection', (socket) => {
@@ -283,7 +522,7 @@ export function setupGameServer(io) {
 
       // Même compte déjà présent (reconnexion) → on remplace
       for (const [oldId, oldP] of Array.from(rooms.get(code).players)) {
-        if (oldP.login === user.username) removePlayer(code, oldId);
+        if (!oldP.isBot && oldP.login === user.username) removePlayer(code, oldId);
       }
       if (!rooms.has(code)) rooms.set(code, createRoom(socket.id));
       const room = rooms.get(code);
@@ -294,7 +533,7 @@ export function setupGameServer(io) {
         id: socket.id,
         login: user.username,
         username: prof.displayName,
-        position: pickSpawn(Array.from(room.players.values()).map((x) => x.position)),
+        position: pickSpawn(Array.from(room.players.values()).map((x) => x.position), null, getMap(room.map).spawns),
         rotation: { yaw: 0, pitch: 0 },
         hp: PLAYER_MAX_HP,
         alive: true,
@@ -306,12 +545,15 @@ export function setupGameServer(io) {
         lastSeen: Date.now(),
         lastCombat: 0,
         loadout: [...saved],
+        baseLoadout: [...saved],
         weaponId: saved[0],
+        lootWeapon: null,
+        ggLevel: 0,
         shotTokens: 3, lastTokenAt: Date.now(),
         fireTokens: 3, lastFireAt: Date.now(),
         matchHeadshots: 0, matchJoinedAt: 0,
       };
-      if (room.players.size === 0) room.host = socket.id;
+      if (humans(room).length === 0) room.host = socket.id;
       room.players.set(socket.id, playerData);
       room.scores.set(socket.id, 0);
       room.deaths.set(socket.id, 0);
@@ -359,29 +601,72 @@ export function setupGameServer(io) {
 
     socket.on('room:leave', () => leaveRoom());
 
-    // --- Réglages du salon (hôte uniquement) ---
-    socket.on('room:setMode', ({ mode } = {}) => {
+    // --- Réglages du salon (hôte uniquement, hors match) ---
+    const hostWaiting = () => {
       const { room, code } = me();
-      if (!room || room.host !== socket.id || room.matchStatus === 'playing') return;
-      if (mode !== 'ffa' && mode !== 'team') return;
+      if (!room || room.host !== socket.id || room.matchStatus !== 'waiting') return null;
+      return { room, code };
+    };
+
+    socket.on('room:setMode', ({ mode } = {}) => {
+      const ctx = hostWaiting();
+      if (!ctx || !MODES[mode]) return;
+      const { room, code } = ctx;
       room.mode = mode;
-      room.killTarget = DEFAULT_TARGET[mode];
+      room.killTarget = MODES[mode].defaultTarget;
       if (mode === 'team') { // répartit équitablement les équipes
         let i = 0;
         for (const q of room.players.values()) q.team = i++ % 2;
       }
+      resetChests(room);
       broadcastRoom(code);
     });
     socket.on('room:setTarget', ({ target } = {}) => {
-      const { room, code } = me();
-      if (!room || room.host !== socket.id || room.matchStatus === 'playing') return;
-      if (!KILL_TARGETS.includes(target)) return;
+      const ctx = hostWaiting();
+      if (!ctx) return;
+      const { room, code } = ctx;
+      if (!MODES[room.mode].targets.includes(target)) return;
       room.killTarget = target;
       broadcastRoom(code);
+    });
+    socket.on('room:setMap', ({ map } = {}) => {
+      const ctx = hostWaiting();
+      if (!ctx || !MAP_IDS.includes(map)) return;
+      const { room, code } = ctx;
+      // la carte ne change que si personne n'est déjà dans la partie (le client construit la carte à l'entrée)
+      if (Array.from(room.players.values()).some((p) => !p.isBot && p.inGame)) return;
+      room.map = map;
+      resetChests(room);
+      const spawns = getMap(map).spawns;
+      for (const p of room.players.values()) p.position = { ...pickSpawn([], null, spawns) };
+      broadcastRoom(code);
+    });
+    socket.on('room:setBots', ({ count, level } = {}) => {
+      const ctx = hostWaiting();
+      if (!ctx) return;
+      const { room, code } = ctx;
+      if (Number.isInteger(count)) room.botsCount = Math.max(0, Math.min(MAX_BOTS, count));
+      if (Number.isInteger(level) && BOT_LEVELS[level]) room.botsLevel = level;
+      syncBots(code);
+    });
+    socket.on('room:setChests', ({ on } = {}) => {
+      const ctx = hostWaiting();
+      if (!ctx) return;
+      ctx.room.chestsOn = !!on;
+      resetChests(ctx.room);
+      broadcastRoom(ctx.code);
     });
     socket.on('room:kick', ({ id } = {}) => {
       const { room, code } = me();
       if (!room || room.host !== socket.id || id === socket.id || !room.players.has(id)) return;
+      const target = room.players.get(id);
+      if (target.isBot) {
+        room.botsCount = Math.max(0, room.botsCount - 1);
+        room.players.delete(id); room.scores.delete(id); room.deaths.delete(id);
+        io.to(code).emit('player:left', { id });
+        broadcastScores(code); broadcastRoom(code);
+        return;
+      }
       io.to(id).emit('room:kicked');
       io.sockets.sockets.get(id)?.leave(code);
       removePlayer(code, id);
@@ -413,7 +698,7 @@ export function setupGameServer(io) {
       p.matchJoinedAt = Date.now();
 
       const others = Array.from(room.players.values()).filter((x) => x.id !== socket.id);
-      socket.emit('match:entered', { players: others.map(gameView), me: gameView(p), mode: room.mode });
+      socket.emit('match:entered', { players: others.map(gameView), me: gameView(p), mode: room.mode, map: room.map });
       broadcastRoom(code);
 
       if (room.matchStatus === 'waiting' && canStart(room)) {
@@ -422,9 +707,12 @@ export function setupGameServer(io) {
         const teams = {};
         for (const q of room.players.values()) teams[q.id] = q.team;
         socket.emit('match:started', {
-          duration: MATCH_DURATION, killTarget: room.killTarget, mode: room.mode, teams,
-          timeLeft: MATCH_DURATION - (Date.now() - room.matchStartTime),
+          duration: MATCH_DURATION, killTarget: room.killTarget, mode: room.mode, teams, map: room.map,
+          timeLeft: MATCH_DURATION - (Date.now() - room.matchStartTime), ladder: GG_LADDER.length,
         });
+        socket.emit('chests:state', { chests: chestsPublic(room) });
+        if (room.koth) socket.emit('koth:state', kothPublic(room));
+        if (room.mode === 'gungame') giveGungameWeapon(room, code, p);
         broadcastScores(code);
       }
     });
@@ -448,10 +736,12 @@ export function setupGameServer(io) {
 
     // Choix des armes (4 max) — validé côté serveur, mémorisé dans le profil
     socket.on('player:loadout', ({ loadout }) => {
-      const { p, code } = me();
+      const { room, p, code } = me();
       if (!p || !isValidLoadout(loadout)) return;
+      if (room && room.mode === 'gungame' && room.matchStatus === 'playing') return; // arme imposée
+      p.baseLoadout = [...loadout];
       p.loadout = loadout;
-      if (!loadout.includes(p.weaponId)) p.weaponId = loadout[0];
+      if (!p.loadout.includes(p.weaponId) && p.lootWeapon !== p.weaponId) p.weaponId = loadout[0];
       saveLoadout(p.login, loadout);
       broadcastRoom(code);
     });
@@ -459,7 +749,7 @@ export function setupGameServer(io) {
     // Arme en main (visible par les autres joueurs)
     socket.on('player:weapon', ({ weaponId } = {}) => {
       const { p, code } = me();
-      if (!p || !p.loadout.includes(weaponId)) return;
+      if (!p || !canUse(p, weaponId)) return;
       p.weaponId = weaponId;
       socket.to(code).emit('player:weapon', { id: socket.id, weaponId });
     });
@@ -469,7 +759,7 @@ export function setupGameServer(io) {
       const { room, p, code } = me();
       if (!room || room.matchStatus !== 'playing') return;
       const def = WEAPONS[weaponId];
-      if (!p || !p.alive || !def || !p.loadout.includes(weaponId)) return;
+      if (!p || !p.alive || !def || !canUse(p, weaponId)) return;
       if (!Array.isArray(dir) || dir.length !== 3 || !dir.every((n) => Number.isFinite(n))) return;
       const now = Date.now();
       p.fireTokens = Math.min(3, p.fireTokens + ((now - p.lastFireAt) / 1000) * def.fireRate * 1.4);
@@ -483,10 +773,20 @@ export function setupGameServer(io) {
       });
     });
 
+    // Ouverture d'un coffre (le serveur tire le butin et vérifie la distance)
+    socket.on('chest:open', ({ id } = {}) => {
+      const { room, p, code } = me();
+      if (!room || !p || !p.alive || room.matchStatus !== 'playing') return;
+      const chest = room.chests.find((c) => c.id === id);
+      if (!chest || chest.opened) return;
+      if (Math.hypot(chest.x - p.position.x, chest.z - p.position.z) > CHEST_REACH) return;
+      openChest(code, room, p, chest);
+    });
+
     // Chat vocal : relais de la signalisation WebRTC entre deux joueurs du salon
     socket.on('voice:signal', ({ to, data } = {}) => {
       const { room } = me();
-      if (!room || typeof to !== 'string' || !data || !room.players.has(to)) return;
+      if (!room || typeof to !== 'string' || !data || !room.players.has(to) || room.players.get(to).isBot) return;
       io.to(to).emit('voice:signal', { from: socket.id, data });
     });
 
@@ -497,7 +797,7 @@ export function setupGameServer(io) {
       if (!room || room.matchStatus !== 'playing') return;
       if (!shooter || !shooter.alive) return;
       const def = WEAPONS[weaponId];
-      if (!def || !shooter.loadout.includes(weaponId)) return;
+      if (!def || !canUse(shooter, weaponId)) return;
       if (!Array.isArray(hits) || hits.length === 0 || hits.length > 8) return;
 
       // Anti-triche léger : limite de cadence (jetons qui se rechargent)
@@ -528,43 +828,7 @@ export function setupGameServer(io) {
         pelletsLeft -= n;
         const heads = Math.max(0, Math.min(n, Math.floor(h.head) || 0));
         const damage = computeDamage(def, dist, n, heads);
-
-        target.hp -= damage;
-        target.lastCombat = now;
-        io.to(code).emit('player:hit', {
-          targetId: target.id,
-          hp: Math.max(0, Math.round(target.hp)),
-          shooterId: shooter.id,
-          shooterName: shooter.username,
-          damage,
-          head: heads > 0,
-        });
-
-        if (target.hp <= 0) {
-          target.alive = false;
-          target.hp = 0;
-          room.scores.set(shooter.id, (room.scores.get(shooter.id) || 0) + 1);
-          room.deaths.set(target.id, (room.deaths.get(target.id) || 0) + 1);
-          if (heads > 0) shooter.matchHeadshots = (shooter.matchHeadshots || 0) + 1;
-          if (room.mode === 'team') room.teamKills[shooter.team]++;
-
-          io.to(code).emit('player:died', {
-            id: target.id,
-            username: target.username,
-            killerName: shooter.username,
-            killerId: shooter.id,
-            killerTeam: shooter.team,
-            victimTeam: target.team,
-            weaponId,
-            head: heads > 0,
-          });
-          broadcastScores(code);
-
-          const reached = room.mode === 'team'
-            ? room.teamKills[shooter.team] >= room.killTarget
-            : (room.scores.get(shooter.id) || 0) >= room.killTarget;
-          if (reached) { endMatch(code); return; }
-        }
+        if (applyDamage(code, room, shooter, target, damage, weaponId, heads > 0)) return;
       }
     });
 
@@ -574,12 +838,15 @@ export function setupGameServer(io) {
       p.alive = true;
       p.hp = PLAYER_MAX_HP;
       p.lastCombat = 0;
+      p.lootWeapon = null;
       p.position = pickSpawn(
         Array.from(room.players.values()).filter((o) => o.id !== p.id && o.alive).map((o) => o.position),
-        room.mode === 'team' ? p.team : null
+        room.mode === 'team' ? p.team : null,
+        getMap(room.map).spawns
       );
       p.lastSeen = Date.now();
       io.to(code).emit('player:respawned', { id: socket.id, position: p.position });
+      if (room.mode === 'gungame') giveGungameWeapon(room, code, p); // l'arme du niveau est restituée
     });
 
     socket.on('player:rift', () => {
@@ -600,9 +867,9 @@ export function setupGameServer(io) {
   return {
     getRoomsSnapshot() {
       return Array.from(rooms.entries()).map(([code, room]) => ({
-        code, mode: room.mode, status: room.matchStatus, killTarget: room.killTarget,
+        code, mode: room.mode, map: room.map, status: room.matchStatus, killTarget: room.killTarget,
         players: Array.from(room.players.values()).map((p) => ({
-          id: p.id, login: p.login, username: p.username, team: p.team, inGame: p.inGame,
+          id: p.id, login: p.login, username: p.username, team: p.team, inGame: p.inGame, isBot: !!p.isBot,
           kills: room.scores.get(p.id) || 0, deaths: room.deaths.get(p.id) || 0,
         })),
       }));
@@ -611,7 +878,7 @@ export function setupGameServer(io) {
       let n = 0;
       for (const [code, room] of Array.from(rooms)) {
         for (const p of Array.from(room.players.values())) {
-          if (p.login === login) {
+          if (!p.isBot && p.login === login) {
             io.to(p.id).emit('room:kicked');
             io.sockets.sockets.get(p.id)?.leave(code);
             removePlayer(code, p.id);
@@ -625,6 +892,7 @@ export function setupGameServer(io) {
       const room = rooms.get(code);
       if (!room) return false;
       for (const p of Array.from(room.players.values())) {
+        if (p.isBot) continue;
         io.to(p.id).emit('room:kicked');
         io.sockets.sockets.get(p.id)?.leave(code);
       }
@@ -634,7 +902,7 @@ export function setupGameServer(io) {
     refreshLogin(login) {
       for (const [code, room] of rooms) {
         for (const p of room.players.values()) {
-          if (p.login !== login) continue;
+          if (p.isBot || p.login !== login) continue;
           const prof = getOrCreateProfile(login);
           p.username = prof.displayName; p.skin = prof.equippedSkin; p.tracer = prof.equippedTracer;
           p.level = levelInfo(prof.xp).level;
@@ -644,7 +912,7 @@ export function setupGameServer(io) {
       }
     },
     isOnline(login) {
-      for (const room of rooms.values()) for (const p of room.players.values()) if (p.login === login) return true;
+      for (const room of rooms.values()) for (const p of room.players.values()) if (!p.isBot && p.login === login) return true;
       return false;
     },
     announce(text) { io.emit('announce', { text, time: Date.now() }); },

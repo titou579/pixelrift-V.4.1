@@ -1,7 +1,8 @@
 // ============================================================
 // CHAT VOCAL — WebRTC en maillage (chaque joueur est relié à chaque autre).
 // Le serveur ne fait que relayer la signalisation ('voice:signal'). Le son passe en direct
-// entre les joueurs. Parler : maintenir V (push-to-talk). Le volume dépend de la distance.
+// entre les joueurs. Micro OUVERT en permanence par défaut (touche M : couper / rétablir) ;
+// le mode « appuyer pour parler » (maintenir V) reste disponible. Le volume dépend de la distance.
 //
 // Le micro demande un contexte sécurisé : http://localhost ou une adresse https (tunnel).
 // Avec une adresse http://192.168.x.x, on peut entendre mais pas parler.
@@ -25,6 +26,15 @@ export function createVoice(socket, { onStatus } = {}) {
   let track = null;
   let ctx = null;
   const peers = new Map(); // id -> { pc, gain, audio, src, pending, remoteSet }
+  const MODE_KEY = 'pixelrift.micMode';
+  let mode = 'open';       // 'open' = micro toujours ouvert | 'ptt' = on maintient V
+  try { if (localStorage.getItem(MODE_KEY) === 'ptt') mode = 'ptt'; } catch { /* ignore */ }
+  let muted = false;       // coupé par le joueur (touche M)
+  let pttDown = false;
+  const applyTrack = () => {
+    if (track) track.enabled = mode === 'open' ? !muted : pttDown;
+    if (onStatus && track) onStatus('ready', '', { mode, muted, pttDown });
+  };
 
   const setStatus = (state, msg = '') => { if (onStatus) onStatus(state, msg); };
   const signal = (to, data) => socket.emit('voice:signal', { to, data });
@@ -48,8 +58,7 @@ export function createVoice(socket, { onStatus } = {}) {
         video: false,
       });
       track = stream.getAudioTracks()[0];
-      track.enabled = false; // muet tant qu'on n'appuie pas sur V
-      setStatus('ready');
+      applyTrack();          // ouvert d'office (ou muet jusqu'à V en mode « appuyer pour parler »)
       return true;
     } catch (e) {
       setStatus('denied', 'Micro refusé — tu peux quand même écouter');
@@ -136,9 +145,18 @@ export function createVoice(socket, { onStatus } = {}) {
     try { p.pc.close(); } catch { /* déjà fermé */ }
   }
 
-  function setTalking(on) {
-    if (track) track.enabled = !!on;
+  function setTalking(on) {          // touche V (utile en mode « appuyer pour parler »)
+    pttDown = !!on;
+    applyTrack();
   }
+  function toggleMute() { muted = !muted; applyTrack(); return muted; }
+  function setMode(m) {
+    mode = m === 'ptt' ? 'ptt' : 'open';
+    try { localStorage.setItem(MODE_KEY, mode); } catch { /* ignore */ }
+    applyTrack();
+    return mode;
+  }
+  const getState = () => ({ mode, muted, pttDown, hasMic: !!track });
   function setVolume(id, v) {
     const p = peers.get(id);
     if (p && p.gain) p.gain.gain.value = v;
@@ -157,5 +175,5 @@ export function createVoice(socket, { onStatus } = {}) {
     ctx = null; stream = null; track = null;
   }
 
-  return { start, connect, closePeer, setTalking, setVolume, resume, hasMic, dispose };
+  return { start, connect, closePeer, setTalking, toggleMute, setMode, getState, setVolume, resume, hasMic, dispose };
 }

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ASSETS } from './assetCatalog.js';
 import { loadAsset, cloneModel } from './assetLoader.js';
-import { generateMap, MAP_HALF } from './mapLayout.js';
+import { generateMapById } from './maps.js';
 import { createCollisionWorld } from './collision.js';
 
 const CHUNK = 100; // les props sont regroupés par carrés de 100 m (pour que le culling fonctionne)
@@ -81,9 +81,10 @@ function flatPlane(w, d, x, y, z) {
 }
 
 // ---------- Construction principale ----------
-export async function buildMap(scene, { spawns, onProgress } = {}) {
+export async function buildMap(scene, { spawns, mapId = 'ville', onProgress } = {}) {
   const progress = (m) => onProgress && onProgress(m);
-  const layout = generateMap(spawns && spawns.length ? spawns : undefined);
+  const layout = generateMapById(mapId, spawns);
+  const MAP_HALF = layout.half;
   const colliders = [];
   const disposables = [];
 
@@ -104,7 +105,7 @@ export async function buildMap(scene, { spawns, onProgress } = {}) {
 
   // 2. Sol de base (herbe)
   {
-    const tex = grassTexture();
+    const tex = grassTexture(layout.groundColor ?? 0x5b8c42);
     tex.repeat.set(160, 160);
     const m = new THREE.Mesh(
       new THREE.PlaneGeometry(1900, 1900),
@@ -129,7 +130,12 @@ export async function buildMap(scene, { spawns, onProgress } = {}) {
   {
     const tex = concreteTexture(0xaaa89d);
     tex.repeat.set(26 / 3, 26 / 3);
-    const geos = layout.slabs.map((s) => flatPlane(s.w, s.d, s.x, 0.04, s.z));
+    const geos = layout.slabs.map((s) => {
+      const g = flatPlane(s.w, s.d, s.x, 0.04, s.z);
+      const uv = g.attributes.uv;
+      for (let i = 0; i < uv.count; i++) { uv.setX(i, uv.getX(i) * (s.w / 26)); uv.setY(i, uv.getY(i) * (s.d / 26)); }
+      return g;
+    });
     if (geos.length) {
       const m = new THREE.Mesh(mergeGeometries(geos), layerMaterial(tex, 2));
       scene.add(m);
@@ -349,7 +355,7 @@ export async function buildMap(scene, { spawns, onProgress } = {}) {
     const qi = new THREE.Quaternion();
     for (let i = 0; i < N; i++) {
       const a = (i / N) * Math.PI * 2 + Math.sin(i * 12.9898) * 0.08;
-      const dist = 255 + (Math.sin(i * 78.233) * 0.5 + 0.5) * 50;
+      const dist = MAP_HALF + 85 + (Math.sin(i * 78.233) * 0.5 + 0.5) * 50;
       const r = 40 + (Math.sin(i * 4.1) * 0.5 + 0.5) * 35;
       const h = 45 + (Math.sin(i * 9.7) * 0.5 + 0.5) * 60;
       m.compose(

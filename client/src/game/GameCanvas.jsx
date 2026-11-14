@@ -9,6 +9,7 @@ import { createRemotePlayersManager } from './remotePlayers.js';
 import { getGameConfig, getLoadout, saveLoadout } from './gameConfig.js';
 import { CREDITS } from './credits.js';
 import { createVoice, voiceVolume } from './voice.js';
+import { createChests, createHill } from './chests.js';
 import { loadCatalog, tracerById } from './catalogStore.js';
 import { getProfile } from '../api.js';
 import Icon from '../components/Icon.jsx';
@@ -41,10 +42,13 @@ function Compass({ heading }) {
 
 // Tableau des scores : par joueur, ou par équipe en mode équipes
 function ScoreTable({ rows, mode, myId, teamKills, highlightWinner, teamNames = ['Alpha', 'Bravo'] }) {
-  const head = <thead><tr><th>#</th><th>Opérateur</th><th>Éliminations</th><th>Morts</th></tr></thead>;
+  const extra = mode === 'koth' ? 'Points' : mode === 'gungame' ? 'Arme' : null;
+  const head = <thead><tr><th>#</th><th>Opérateur</th><th>Éliminations</th><th>Morts</th>{extra && <th>{extra}</th>}</tr></thead>;
   const line = (p, i, cls = '') => (
     <tr key={p.id} className={`${p.id === myId ? 'me' : ''} ${cls}`}>
       <td>{i + 1}</td><td>{p.username}</td><td>{p.kills}</td><td>{p.deaths}</td>
+      {mode === 'koth' && <td>{p.points || 0}</td>}
+      {mode === 'gungame' && <td>{(p.gg || 0) + 1}</td>}
     </tr>
   );
   if (mode === 'team') {
@@ -62,7 +66,7 @@ function ScoreTable({ rows, mode, myId, teamKills, highlightWinner, teamNames = 
       </div>
     );
   }
-  const sorted = [...rows].sort((a, b) => b.kills - a.kills);
+  const sorted = [...rows].sort((a, b) => (mode === 'koth' ? (b.points || 0) - (a.points || 0) : mode === 'gungame' ? (b.gg || 0) - (a.gg || 0) : 0) || b.kills - a.kills);
   return (
     <table>
       {head}
@@ -72,6 +76,13 @@ function ScoreTable({ rows, mode, myId, teamKills, highlightWinner, teamNames = 
 }
 
 const MODE_TXT = { auto: 'AUTO', semi: 'SEMI', burst: 'RAFALE' };
+const RAR = {
+  common: { label: 'Commun', color: '#b6bcc4', hex: 0xb6bcc4 },
+  rare: { label: 'Rare', color: '#4fa8ff', hex: 0x4fa8ff },
+  epic: { label: 'Épique', color: '#b866ff', hex: 0xb866ff },
+  legendary: { label: 'Légendaire', color: '#ffb62e', hex: 0xffb62e },
+};
+const MODE_NAME = { ffa: 'Mêlée générale', team: 'Équipes', gungame: 'Course aux armes', koth: 'Roi de la colline' };
 
 export default function GameCanvas({ user, roomCode, onExit }) {
   const canvasRef = useRef(null);
@@ -111,6 +122,12 @@ export default function GameCanvas({ user, roomCode, onExit }) {
   const [myTeam, setMyTeam] = useState(0);
   const [teamKills, setTeamKills] = useState([0, 0]);
   const [killTarget, setKillTarget] = useState(15);
+  const [lootToast, setLootToast] = useState(null);
+  const [nearChest, setNearChest] = useState(false);
+  const [koth, setKoth] = useState(null);
+  const [ladder, setLadder] = useState(9);
+  const [ggLevel, setGgLevel] = useState(0);
+  const [myId, setMyId] = useState(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -120,6 +137,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
     const game = {
       renderer: null, scene: null, camera: null, sky: null,
       player: null, weapons: null, rift: null, remotes: null, config: null, voice: null,
+      chests: null, hill: null,
       raf: null, sendState: null, timerInt: null, respawnInt: null, hudInt: null, fpsInt: null,
       handlers: {},
     };
@@ -146,7 +164,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
       if (!game.remotes) return;
       if (p.id === socket.id) return;
       game.remotes.add(p.id, p, p.position, p.rotation);
-      game.voice?.connect(p.id);
+      if (!p.isBot) game.voice?.connect(p.id);
     };
     const onPlayerLeft = ({ id }) => {
       game.remotes?.remove(id);
@@ -162,15 +180,36 @@ export default function GameCanvas({ user, roomCode, onExit }) {
       for (const p of players) {
         if (p.id === socket.id) continue;
         game.remotes.add(p.id, p, p.position, p.rotation);
-        game.voice?.connect(p.id);
+        if (!p.isBot) game.voice?.connect(p.id);
       }
     };
     const onPlayerWeapon = ({ id, weaponId }) => game.remotes?.setWeapon(id, weaponId);
     const onPlayerLook = ({ id, skin, username, team }) => {
       if (id !== socket.id) game.remotes?.setLook(id, { skin, username, team });
     };
-    const onTeamsUpdate = ({ teamKills: tk, mode: m, killTarget: kt }) => { setTeamKills(tk); setMode(m); setKillTarget(kt); };
+    const onTeamsUpdate = ({ teamKills: tk, mode: m, killTarget: kt, ladder: lad }) => { setTeamKills(tk); setMode(m); setKillTarget(kt); if (lad) setLadder(lad); };
     const onKicked = () => onExit();
+
+    // --- Coffres, butin, modes de jeu (v5) ---
+    const onChestsState = ({ chests }) => game.chests?.setState(chests);
+    const onChestOpened = ({ id, rarity }) => game.chests?.open(id, (RAR[rarity] || RAR.common).hex);
+    const onChestRespawn = ({ id }) => game.chests?.respawn(id);
+    const onLootGranted = ({ weaponId, rarity, heal }) => {
+      game.weapons?.giveLoot(weaponId);
+      const tid = Date.now() + Math.random();
+      setLootToast({ id: tid, name: weaponName(weaponId), rarity, heal });
+      setTimeout(() => setLootToast((t) => (t && t.id === tid ? null : t)), 3200);
+    };
+    const onLoadoutForced = ({ loadout, level, ladder: lad }) => {
+      game.weapons?.setLoadout(loadout);
+      setGgLevel(level || 0);
+      if (lad) setLadder(lad);
+    };
+    const onLoadoutRestore = () => {
+      if (game.config) game.weapons?.setLoadout(getLoadout(game.config));
+      setGgLevel(0);
+    };
+    const onKothState = (st) => { setKoth(st); game.hill?.set(st, socket.id); };
 
     // Tir d'un autre joueur : traînée + son (plus faible avec la distance)
     const onPlayerFired = ({ id, weaponId, dir, tracer }) => {
@@ -184,7 +223,10 @@ export default function GameCanvas({ user, roomCode, onExit }) {
     };
 
     const onScoresUpdate = (list) => setScores(list);
-    const onMatchStarted = ({ duration, timeLeft: tl, mode: m, teams, killTarget: kt }) => {
+    const onMatchStarted = ({ duration, timeLeft: tl, mode: m, teams, killTarget: kt, ladder: lad }) => {
+      if (lad) setLadder(lad);
+      if (m !== 'koth') { setKoth(null); game.hill?.set(null); }
+      if (m !== 'gungame') setGgLevel(0);
       if (m) {
         const t = teams && teams[socket.id] !== undefined ? teams[socket.id] : 0;
         setMode(m); setMyTeam(t); setKillTarget(kt); setTeamKills([0, 0]);
@@ -239,6 +281,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         setKilledBy({ name: killerName, weapon: weaponId ? weaponName(weaponId) : '', head });
         setAlive(false);
         setRespawnIn(3);
+        game.weapons?.clearLoot();
         game.weapons?.triggerUp();
         game.weapons?.setAds(false);
       } else {
@@ -289,12 +332,20 @@ export default function GameCanvas({ user, roomCode, onExit }) {
     socket.on('player:look', onPlayerLook);
     socket.on('teams:update', onTeamsUpdate);
     socket.on('room:kicked', onKicked);
+    socket.on('chests:state', onChestsState);
+    socket.on('chest:opened', onChestOpened);
+    socket.on('chest:respawn', onChestRespawn);
+    socket.on('loot:granted', onLootGranted);
+    socket.on('loadout:forced', onLoadoutForced);
+    socket.on('loadout:restore', onLoadoutRestore);
+    socket.on('koth:state', onKothState);
 
     game.handlers = {
       onConnect, onDisconnect, onPlayerJoined, onPlayerLeft, onPlayerState, onMatchEntered,
       onScoresUpdate, onMatchStarted, onMatchEnded, onMatchReset, onMatchRewards,
       onPlayerHit, onPlayerHp, onPlayerDied, onPlayerRespawned, onPlayerFired,
       onPlayerWeapon, onPlayerLook, onTeamsUpdate, onKicked,
+      onChestsState, onChestOpened, onChestRespawn, onLootGranted, onLoadoutForced, onLoadoutRestore, onKothState,
     };
 
     // --- Chargement ---
@@ -306,7 +357,20 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         try { await loadCatalog(); } catch { /* skins par défaut */ }
         if (cancelled) return;
 
-        const { world, pads } = await buildMap(scene, {
+        // Quelle carte ? (choisie par l'hôte dans le salon)
+        const roomInfo = roomCode
+          ? await new Promise((resolve) => {
+            const to = setTimeout(() => resolve(null), 4000);
+            socket.emit('room:join', { code: roomCode }, (r) => { clearTimeout(to); resolve(r && r.ok ? r : null); });
+          })
+          : null;
+        const mapId = (roomInfo && roomInfo.state && roomInfo.state.map) || 'ville';
+        setMyId(socket.id);
+        if (roomInfo && roomInfo.state) { setMode(roomInfo.state.mode); setKillTarget(roomInfo.state.killTarget); }
+        if (cancelled) return;
+
+        const { world, pads, layout } = await buildMap(scene, {
+          mapId,
           spawns: config.spawns,
           onProgress: (m) => {
             if (cancelled) return;
@@ -320,15 +384,19 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         if (cancelled) return;
 
         setLoadProgress('Préparation du joueur et des armes…');
-        const spawn = config.spawns[Math.floor(Math.random() * config.spawns.length)];
+        const spawnList = layout.spawns && layout.spawns.length ? layout.spawns : config.spawns;
+        const spawn = spawnList[Math.floor(Math.random() * spawnList.length)];
         game.player = createPlayer(camera, canvas, world, spawn);
         game.player.setPads(pads);
         game.remotes = createRemotePlayersManager(scene);
         game.rift = createRift(scene, camera, game.player);
+        game.chests = createChests(scene);
+        game.hill = createHill(scene);
         game.weapons = createWeaponSystem({
           scene, camera, player: game.player, world, remotes: game.remotes,
           defs: config.weapons,
           loadout: getLoadout(config),
+          showTargets: mapId === 'ville',
           onShoot: (data) => { if (socket.connected) socket.emit('player:shoot', data); },
           onFired: (data) => { if (socket.connected) socket.emit('player:fire', data); },
           onScope: (v) => setScoped(v),
@@ -349,7 +417,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         if (cancelled) return;
 
         // Chat vocal (le micro demande l'autorisation ; on écoute même sans micro)
-        game.voice = createVoice(socket, { onStatus: (state, msg) => setVoiceStatus({ state, msg }) });
+        game.voice = createVoice(socket, { onStatus: (state, msg, info) => setVoiceStatus({ state, msg, ...(info || {}) }) });
         game.voice.start();
 
         // --- Contrôles ---
@@ -385,9 +453,14 @@ export default function GameCanvas({ user, roomCode, onExit }) {
           }
           if (isLocked() && game.weapons) {
             if (e.code === 'KeyR') game.weapons.reload();
-            const m = /^(?:Digit|Numpad)([1-4])$/.exec(e.code);
+            const m = /^(?:Digit|Numpad)([1-5])$/.exec(e.code);
             if (m) game.weapons.select(Number(m[1]) - 1);
           }
+          if (e.code === 'KeyF' && !e.repeat && isLocked() && game.chests) {
+            const n = game.chests.nearest(camera.position, 4.5);
+            if (n && socket.connected) socket.emit('chest:open', { id: n.id });
+          }
+          if (e.code === 'KeyM' && !e.repeat && game.voice?.hasMic()) game.voice.toggleMute();
           if (e.code === 'KeyV' && !e.repeat && game.voice?.hasMic()) {
             game.voice.setTalking(true);
             setTalking(true);
@@ -448,6 +521,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         const _eye = new THREE.Vector3();
         game.hudInt = setInterval(() => {
           if (game.weapons) setWeaponHud(game.weapons.getHud());
+          if (game.chests) setNearChest(!!game.chests.nearest(camera.position, 4.5));
           if (game.player) {
             setLunar(Math.ceil(game.player.state.lunarT));
             setHeading(Math.round((((-game.player.state.yaw * 180) / Math.PI) % 360 + 360) % 360) % 360);
@@ -489,6 +563,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
           game.weapons.update(dt);
           game.rift.update(dt);
           game.remotes.tick(dt);
+          game.chests?.tick(dt);
           sky.position.copy(camera.position);
 
           renderer.render(scene, camera);
@@ -538,6 +613,13 @@ export default function GameCanvas({ user, roomCode, onExit }) {
       socket.off('player:look', h.onPlayerLook);
       socket.off('teams:update', h.onTeamsUpdate);
       socket.off('room:kicked', h.onKicked);
+      socket.off('chests:state', h.onChestsState);
+      socket.off('chest:opened', h.onChestOpened);
+      socket.off('chest:respawn', h.onChestRespawn);
+      socket.off('loot:granted', h.onLootGranted);
+      socket.off('loadout:forced', h.onLoadoutForced);
+      socket.off('loadout:restore', h.onLoadoutRestore);
+      socket.off('koth:state', h.onKothState);
 
       if (h.onMouseDown) document.removeEventListener('mousedown', h.onMouseDown);
       if (h.onMouseUp) document.removeEventListener('mouseup', h.onMouseUp);
@@ -548,6 +630,8 @@ export default function GameCanvas({ user, roomCode, onExit }) {
       if (h.onLockChange) document.removeEventListener('pointerlockchange', h.onLockChange);
       if (h.onResize) window.removeEventListener('resize', h.onResize);
 
+      game.chests?.dispose();
+      game.hill?.dispose();
       game.voice?.dispose();
       game.weapons?.dispose();
       game.remotes?.clear();
@@ -606,6 +690,17 @@ export default function GameCanvas({ user, roomCode, onExit }) {
 
         <Compass heading={heading} />
 
+        {nearChest && alive && locked && (
+          <div className="chest-prompt"><span className="keycap">F</span> Ouvrir le coffre</div>
+        )}
+        {lootToast && (
+          <div key={lootToast.id} className="loot-toast" style={{ '--rar': (RAR[lootToast.rarity] || RAR.common).color }}>
+            <small>{(RAR[lootToast.rarity] || RAR.common).label}</small>
+            <b>{lootToast.name}</b>
+            <span>+{lootToast.heal} PV · touche 5</span>
+          </div>
+        )}
+
         <div className="hud-killfeed">
           {killFeed.map((k) => (
             <div key={k.id} className="kill-line">
@@ -626,9 +721,20 @@ export default function GameCanvas({ user, roomCode, onExit }) {
                 <span className="val"><i className="ta">{teamKills[0]}</i> – <i className="tb">{teamKills[1]}</i></span>
               </div>
             )
-            : (
-              <div className="hud-box small"><span className="lbl">Cibles · Objectif {killTarget}</span><span className="val">{score}</span></div>
-            )}
+            : mode === 'koth'
+              ? (
+                <div className={`hud-box small koth ${koth && koth.occupant === myId ? 'mine' : ''} ${koth && koth.contested ? 'contested' : ''}`}>
+                  <span className="lbl">Colline · objectif {killTarget} pts{koth ? ` · zone ${Math.ceil(koth.timeLeft / 1000)}s` : ''}</span>
+                  <span className="val">{(scores.find((r) => r.id === myId) || {}).points || 0}</span>
+                </div>
+              )
+              : mode === 'gungame'
+                ? (
+                  <div className="hud-box small"><span className="lbl">Course aux armes</span><span className="val">{Math.min(ggLevel + 1, ladder)} / {ladder}</span></div>
+                )
+                : (
+                  <div className="hud-box small"><span className="lbl">Éliminations · objectif {killTarget}</span><span className="val">{(scores.find((r) => r.id === myId) || {}).kills ?? score}</span></div>
+                )}
           {showFps && (
             <div className={`hud-fps ${fps.avg && fps.avg < 30 ? 'low' : ''}`}>
               {fps.fps} FPS · MOY {fps.avg}
@@ -672,8 +778,10 @@ export default function GameCanvas({ user, roomCode, onExit }) {
             <div className="cool"><i /></div>
             <span className="st">{riftReady ? 'PRÊT' : 'RECHARGE'}</span>
           </div>
-          <div className={`hud-voice ${talking ? 'talking' : ''} ${voiceStatus.state}`}>
-            {voiceStatus.state === 'ready' && (talking ? 'MICRO ACTIF' : 'MAINTIENS V POUR PARLER')}
+          <div className={`hud-voice ${(voiceStatus.mode === 'ptt' ? talking : !voiceStatus.muted) ? 'talking' : ''} ${voiceStatus.muted ? 'muted' : ''} ${voiceStatus.state}`}>
+            {voiceStatus.state === 'ready' && (voiceStatus.mode === 'ptt'
+              ? (talking ? 'MICRO ACTIF' : 'MAINTIENS V POUR PARLER')
+              : (voiceStatus.muted ? 'MICRO COUPÉ · M pour rétablir' : 'MICRO OUVERT · M pour couper'))}
             {(voiceStatus.state === 'denied' || voiceStatus.state === 'unavailable') && voiceStatus.msg}
           </div>
         </div>
@@ -682,7 +790,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
           <div className="hud-br">
             <div className="slots">
               {weaponHud.slots.map((sl, i) => (
-                <div key={sl.id} className={`slot ${i === weaponHud.index ? 'active' : ''}`}>
+                <div key={sl.id} className={`slot ${i === weaponHud.index ? 'active' : ''} ${sl.rarity ? 'loot' : ''}`} style={sl.rarity ? { '--rar': (RAR[sl.rarity] || RAR.common).color } : undefined}>
                   <b>{i + 1}</b>{sl.name}
                 </div>
               ))}
@@ -711,7 +819,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         )}
 
         <div className="hud-hint">
-          Clic tirer · Clic droit viser · R recharger · 1-4 armes · C glisser · E rift · V parler · Tab scores
+          Clic tirer · Clic droit viser · R recharger · 1-5 armes · F coffre · C glisser · E rift · M micro · Tab scores
         </div>
       </div>
 
@@ -783,6 +891,9 @@ export default function GameCanvas({ user, roomCode, onExit }) {
             <p className="pause-sub">// EN PAUSE</p>
             <button className="menu-item primary" onClick={enterGame}>Reprendre<small>Clique n'importe où pour jouer</small></button>
             <button className="menu-item" onClick={() => setShowArsenal(true)}>Arsenal<small>Changer mes 4 armes</small></button>
+            <button className="menu-item" onClick={() => { const v = gameRef.current?.voice; if (v) v.setMode(voiceStatus.mode === 'ptt' ? 'open' : 'ptt'); }}>
+              Micro : {voiceStatus.mode === 'ptt' ? 'appuyer pour parler (V)' : 'toujours ouvert'}<small>Clique pour changer de mode</small>
+            </button>
             <button className="menu-item" onClick={() => setShowCredits(true)}>Crédits<small>Modèles 3D</small></button>
             <button className="menu-item dim" onClick={onExit}>Quitter la partie</button>
           </div>
@@ -795,7 +906,8 @@ export default function GameCanvas({ user, roomCode, onExit }) {
             <span><span className="kbd">R</span></span><span>Recharger</span>
             <span><span className="kbd">1-4</span></span><span>Armes (ou molette)</span>
             <span><span className="kbd">E</span></span><span>Rift (téléportation)</span>
-            <span><span className="kbd">V</span></span><span>Parler (maintenu)</span>
+            <span><span className="kbd">F</span></span><span>Ouvrir un coffre (butin)</span>
+            <span><span className="kbd">M</span></span><span>Couper / rétablir le micro</span>
             <span><span className="kbd">Tab</span></span><span>Classement · <span className="kbd">F3</span> FPS</span>
           </div>
         </div>
