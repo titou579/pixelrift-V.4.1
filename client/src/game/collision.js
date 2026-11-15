@@ -59,14 +59,20 @@ export function createCollisionWorld(boxes, cell = 12) {
       if (arr) for (const b of arr) candidates.add(b);
     }
     let best = Infinity;
+    let bestBox = null;
     for (const b of candidates) {
       const t = rayBox(ox, oy, oz, dx, dy, dz, b);
-      if (t >= 0 && t < best && t <= maxDist) best = t;
+      if (t >= 0 && t < best && t <= maxDist) { best = t; bestBox = b; }
     }
-    return best;
+    return { t: best, box: bestBox };
   }
 
-  return { nearby, raycast, count: boxes.length };
+  return {
+    nearby,
+    raycast: (ox, oy, oz, dx, dy, dz, maxDist) => raycast(ox, oy, oz, dx, dy, dz, maxDist).t,
+    raycastHit: raycast,
+    count: boxes.length,
+  };
 }
 
 // Intersection rayon / AABB (méthode des "slabs"). Retourne t >= 0 ou -1.

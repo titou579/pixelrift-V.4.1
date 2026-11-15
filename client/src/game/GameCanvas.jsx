@@ -10,11 +10,15 @@ import { getGameConfig, getLoadout, saveLoadout } from './gameConfig.js';
 import { CREDITS } from './credits.js';
 import { createVoice, voiceVolume } from './voice.js';
 import { createChests, createHill } from './chests.js';
+import { createMapView } from './mapView.js';
+import { buildWeaponIcons } from './weaponIcons.js';
+import { createFx } from './fx.js';
+import TouchControls from '../components/TouchControls.jsx';
+import Tutorial, { tutoSeen } from '../components/Tutorial.jsx';
 import { loadCatalog, tracerById } from './catalogStore.js';
 import { getProfile } from '../api.js';
 import Icon from '../components/Icon.jsx';
 import * as sound from './sound.js';
-import Loadout from '../pages/Loadout.jsx';
 import { getSocket } from '../socket.js';
 import '../styles/game.css';
 
@@ -109,7 +113,6 @@ export default function GameCanvas({ user, roomCode, onExit }) {
   const [hitMark, setHitMark] = useState(null);
   const [fps, setFps] = useState({ fps: 0, avg: 0 });
   const [showFps, setShowFps] = useState(true);
-  const [showArsenal, setShowArsenal] = useState(false);
   const [showCredits, setShowCredits] = useState(false);
   const [lunar, setLunar] = useState(0);
   const [voiceStatus, setVoiceStatus] = useState({ state: 'idle', msg: '' });
@@ -128,6 +131,15 @@ export default function GameCanvas({ user, roomCode, onExit }) {
   const [ladder, setLadder] = useState(9);
   const [ggLevel, setGgLevel] = useState(0);
   const [myId, setMyId] = useState(null);
+  const [icons, setIcons] = useState({});
+  const [weaponDefs, setWeaponDefs] = useState([]);
+  const [showTuto, setShowTuto] = useState(false);
+  const [touchEdit, setTouchEdit] = useState(false);
+  const miniRef = useRef(null);
+  const mapRef = useRef(null);
+  const scoresRef = useRef([]);
+  // Appareil tactile ? (écran principal tactile : téléphone / tablette)
+  const isTouch = useRef(typeof window !== 'undefined' && ((window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || false)).current;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -152,7 +164,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
 
     let hitTimer = null;
     let regenTimer = null;
-    const weaponName = (id) => game.config?.weapons.find((w) => w.id === id)?.name || '';
+    const weaponName = (id) => (id === 'explosion' ? 'Explosion' : game.config?.weapons.find((w) => w.id === id)?.name || '');
 
     // --- Listeners socket ---
     const sendLoadout = () => {
@@ -195,7 +207,6 @@ export default function GameCanvas({ user, roomCode, onExit }) {
     const onChestOpened = ({ id, rarity }) => game.chests?.open(id, (RAR[rarity] || RAR.common).hex);
     const onChestRespawn = ({ id }) => game.chests?.respawn(id);
     const onLootGranted = ({ weaponId, rarity, heal }) => {
-      game.weapons?.giveLoot(weaponId);
       const tid = Date.now() + Math.random();
       setLootToast({ id: tid, name: weaponName(weaponId), rarity, heal });
       setTimeout(() => setLootToast((t) => (t && t.id === tid ? null : t)), 3200);
@@ -209,7 +220,32 @@ export default function GameCanvas({ user, roomCode, onExit }) {
       if (game.config) game.weapons?.setLoadout(getLoadout(game.config));
       setGgLevel(0);
     };
-    const onKothState = (st) => { setKoth(st); game.hill?.set(st, socket.id); };
+    const onKothState = (st) => { setKoth(st); game.kothState = st; game.hill?.set(st, socket.id); };
+
+    // --- Inventaire (5 emplacements) et décors destructibles (v6) ---
+    const onInvUpdate = ({ inventory, select, gg }) => {
+      game.weapons?.setInventory(inventory, select);
+      if (gg) { setGgLevel(gg.level || 0); if (gg.ladder) setLadder(gg.ladder); } else if (gg === null) setGgLevel(0);
+    };
+    const distVol = (x, z, ref = 60) => {
+      const d = Math.hypot(x - camera.position.x, z - camera.position.z);
+      return Math.max(0, 1 - d / ref);
+    };
+    const onPropDestroyed = ({ id, type, x, y, z }) => {
+      game.mapProps?.destroy(id);
+      if (type === 'explosive') {
+        game.fx?.explosion(x, y, z, 7);
+        sound.playBoom(Math.min(1, 0.25 + distVol(x, z, 140)));
+      } else {
+        game.fx?.breakProp(x, y, z);
+        sound.playBreak(distVol(x, z, 45));
+      }
+    };
+    const onPropRespawn = ({ id }) => game.mapProps?.restore(id);
+    const onPropsState = ({ destroyed }) => {
+      game.mapProps?.restoreAll();
+      for (const id of destroyed || []) game.mapProps?.destroy(id);
+    };
 
     // Tir d'un autre joueur : traînée + son (plus faible avec la distance)
     const onPlayerFired = ({ id, weaponId, dir, tracer }) => {
@@ -222,7 +258,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
       sound.playShotAt(def.type, Math.pow(Math.max(0, 1 - dist / 140), 1.5));
     };
 
-    const onScoresUpdate = (list) => setScores(list);
+    const onScoresUpdate = (list) => { scoresRef.current = list; setScores(list); };
     const onMatchStarted = ({ duration, timeLeft: tl, mode: m, teams, killTarget: kt, ladder: lad }) => {
       if (lad) setLadder(lad);
       if (m !== 'koth') { setKoth(null); game.hill?.set(null); }
@@ -230,6 +266,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
       if (m) {
         const t = teams && teams[socket.id] !== undefined ? teams[socket.id] : 0;
         setMode(m); setMyTeam(t); setKillTarget(kt); setTeamKills([0, 0]);
+        game.mode = m; game.myTeam = t;
         game.remotes?.setContext({ mode: m, myTeam: t });
         game.remotes?.setTeams(teams);
       }
@@ -281,7 +318,6 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         setKilledBy({ name: killerName, weapon: weaponId ? weaponName(weaponId) : '', head });
         setAlive(false);
         setRespawnIn(3);
-        game.weapons?.clearLoot();
         game.weapons?.triggerUp();
         game.weapons?.setAds(false);
       } else {
@@ -339,6 +375,10 @@ export default function GameCanvas({ user, roomCode, onExit }) {
     socket.on('loadout:forced', onLoadoutForced);
     socket.on('loadout:restore', onLoadoutRestore);
     socket.on('koth:state', onKothState);
+    socket.on('inv:update', onInvUpdate);
+    socket.on('prop:destroyed', onPropDestroyed);
+    socket.on('prop:respawn', onPropRespawn);
+    socket.on('props:state', onPropsState);
 
     game.handlers = {
       onConnect, onDisconnect, onPlayerJoined, onPlayerLeft, onPlayerState, onMatchEntered,
@@ -346,6 +386,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
       onPlayerHit, onPlayerHp, onPlayerDied, onPlayerRespawned, onPlayerFired,
       onPlayerWeapon, onPlayerLook, onTeamsUpdate, onKicked,
       onChestsState, onChestOpened, onChestRespawn, onLootGranted, onLoadoutForced, onLoadoutRestore, onKothState,
+      onInvUpdate, onPropDestroyed, onPropRespawn, onPropsState,
     };
 
     // --- Chargement ---
@@ -354,6 +395,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         setLoadProgress('Récupération de la configuration…');
         const config = await getGameConfig();
         game.config = config;
+        setWeaponDefs(config.weapons);
         try { await loadCatalog(); } catch { /* skins par défaut */ }
         if (cancelled) return;
 
@@ -369,7 +411,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         if (roomInfo && roomInfo.state) { setMode(roomInfo.state.mode); setKillTarget(roomInfo.state.killTarget); }
         if (cancelled) return;
 
-        const { world, pads, layout } = await buildMap(scene, {
+        const { world, pads, layout, props: mapProps } = await buildMap(scene, {
           mapId,
           spawns: config.spawns,
           onProgress: (m) => {
@@ -386,7 +428,11 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         setLoadProgress('Préparation du joueur et des armes…');
         const spawnList = layout.spawns && layout.spawns.length ? layout.spawns : config.spawns;
         const spawn = spawnList[Math.floor(Math.random() * spawnList.length)];
-        game.player = createPlayer(camera, canvas, world, spawn);
+        game.player = createPlayer(camera, canvas, world, spawn, layout.half);
+        game.mapProps = mapProps;
+        game.mapView = createMapView(layout);
+        game.fx = createFx(scene);
+        if (isTouch) game.player.setTouchMode(true);
         game.player.setPads(pads);
         game.remotes = createRemotePlayersManager(scene);
         game.rift = createRift(scene, camera, game.player);
@@ -395,8 +441,9 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         game.weapons = createWeaponSystem({
           scene, camera, player: game.player, world, remotes: game.remotes,
           defs: config.weapons,
-          loadout: getLoadout(config),
+          loadout: ['pistol'],
           showTargets: mapId === 'ville',
+          onPropHit: (ids) => { if (socket.connected) for (const id of ids) socket.emit('prop:hit', { id }); },
           onShoot: (data) => { if (socket.connected) socket.emit('player:shoot', data); },
           onFired: (data) => { if (socket.connected) socket.emit('player:fire', data); },
           onScope: (v) => setScoped(v),
@@ -415,20 +462,37 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         }).catch(() => {});
         await game.weapons.ready;
         if (cancelled) return;
+        buildWeaponIcons(config.weapons.map((w) => w.id)).then((ic) => { if (!cancelled) setIcons(ic); });
+        if (!tutoSeen()) setShowTuto(true);
 
         // Chat vocal (le micro demande l'autorisation ; on écoute même sans micro)
         game.voice = createVoice(socket, { onStatus: (state, msg, info) => setVoiceStatus({ state, msg, ...(info || {}) }) });
         game.voice.start();
 
         // --- Contrôles ---
-        const isLocked = () => document.pointerLockElement === canvas;
+        const isLocked = () => (isTouch ? !!game.touchPlaying : document.pointerLockElement === canvas);
+        const doRift = () => {
+          if (!game.rift || !isLocked()) return;
+          if (game.rift.use()) {
+            if (socket.connected) socket.emit('player:rift');
+            setRiftReady(false);
+            setTimeout(() => setRiftReady(true), 4000);
+          }
+        };
+        const doOpenChest = () => {
+          if (!game.chests || !isLocked()) return;
+          const n = game.chests.nearest(camera.position, 4.5);
+          if (n && socket.connected) socket.emit('chest:open', { id: n.id });
+        };
+        game.doRift = doRift;
+        game.doOpenChest = doOpenChest;
         const onMouseDown = (e) => {
-          if (!isLocked() || !game.weapons) return;
+          if (isTouch || !isLocked() || !game.weapons) return;
           if (e.button === 0) game.weapons.triggerDown();
           if (e.button === 2) game.weapons.setAds(true);
         };
         const onMouseUp = (e) => {
-          if (!game.weapons) return;
+          if (isTouch || !game.weapons) return;
           if (e.button === 0) game.weapons.triggerUp();
           if (e.button === 2) game.weapons.setAds(false);
         };
@@ -443,23 +507,13 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         canvas.addEventListener('contextmenu', onContext);
 
         const onKeyDown = (e) => {
-          if (e.code === 'KeyE' && game.rift && isLocked()) {
-            const ok = game.rift.use();
-            if (ok) {
-              if (socket.connected) socket.emit('player:rift');
-              setRiftReady(false);
-              setTimeout(() => setRiftReady(true), 4000);
-            }
-          }
+          if (e.code === 'KeyE' && !e.repeat) doRift();
           if (isLocked() && game.weapons) {
             if (e.code === 'KeyR') game.weapons.reload();
             const m = /^(?:Digit|Numpad)([1-5])$/.exec(e.code);
             if (m) game.weapons.select(Number(m[1]) - 1);
           }
-          if (e.code === 'KeyF' && !e.repeat && isLocked() && game.chests) {
-            const n = game.chests.nearest(camera.position, 4.5);
-            if (n && socket.connected) socket.emit('chest:open', { id: n.id });
-          }
+          if (e.code === 'KeyF' && !e.repeat) doOpenChest();
           if (e.code === 'KeyM' && !e.repeat && game.voice?.hasMic()) game.voice.toggleMute();
           if (e.code === 'KeyV' && !e.repeat && game.voice?.hasMic()) {
             game.voice.setTalking(true);
@@ -522,6 +576,23 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         game.hudInt = setInterval(() => {
           if (game.weapons) setWeaponHud(game.weapons.getHud());
           if (game.chests) setNearChest(!!game.chests.nearest(camera.position, 4.5));
+          if (game.mapView && game.player) {
+            const ps = game.player.state;
+            const st = {
+              me: { x: ps.position.x, z: ps.position.z, yaw: ps.yaw },
+              chests: game.chests ? game.chests.list() : [],
+              hill: game.kothState ? { x: game.kothState.x, z: game.kothState.z, r: game.kothState.r, color: game.kothState.contested ? '#e74c3c' : game.kothState.occupant ? '#ff9d1c' : '#58d68d' } : null,
+              allies: [],
+            };
+            if (game.mode === 'team' && game.remotes) {
+              const teamOf = new Map(scoresRef.current.map((r) => [r.id, r.team]));
+              for (const id of game.remotes.ids()) {
+                if (teamOf.get(id) === game.myTeam && game.remotes.getEyePosition(id, _eye)) st.allies.push({ x: _eye.x, z: _eye.z });
+              }
+            }
+            if (miniRef.current) game.mapView.drawMini(miniRef.current, st);
+            if (game.showTab && mapRef.current) game.mapView.drawFull(mapRef.current, st);
+          }
           if (game.player) {
             setLunar(Math.ceil(game.player.state.lunarT));
             setHeading(Math.round((((-game.player.state.yaw * 180) / Math.PI) % 360 + 360) % 360) % 360);
@@ -564,6 +635,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
           game.rift.update(dt);
           game.remotes.tick(dt);
           game.chests?.tick(dt);
+          game.fx?.tick(dt);
           sky.position.copy(camera.position);
 
           renderer.render(scene, camera);
@@ -620,6 +692,10 @@ export default function GameCanvas({ user, roomCode, onExit }) {
       socket.off('loadout:forced', h.onLoadoutForced);
       socket.off('loadout:restore', h.onLoadoutRestore);
       socket.off('koth:state', h.onKothState);
+      socket.off('inv:update', h.onInvUpdate);
+      socket.off('prop:destroyed', h.onPropDestroyed);
+      socket.off('prop:respawn', h.onPropRespawn);
+      socket.off('props:state', h.onPropsState);
 
       if (h.onMouseDown) document.removeEventListener('mousedown', h.onMouseDown);
       if (h.onMouseUp) document.removeEventListener('mouseup', h.onMouseUp);
@@ -632,6 +708,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
 
       game.chests?.dispose();
       game.hill?.dispose();
+      game.fx?.dispose();
       game.voice?.dispose();
       game.weapons?.dispose();
       game.remotes?.clear();
@@ -643,17 +720,40 @@ export default function GameCanvas({ user, roomCode, onExit }) {
 
   const enterGame = () => {
     sound.resumeAudio();
-    gameRef.current?.voice?.resume();
-    canvasRef.current?.requestPointerLock();
+    const g = gameRef.current;
+    g?.voice?.resume();
+    if (isTouch) {
+      if (g) g.touchPlaying = true;
+      setLocked(true);
+      // Plein écran + paysage si le navigateur le permet
+      try { document.documentElement.requestFullscreen?.().then(() => screen.orientation?.lock?.('landscape').catch(() => {})).catch(() => {}); } catch { /* ignore */ }
+    } else {
+      canvasRef.current?.requestPointerLock();
+    }
   };
 
-  // Le joueur valide un nouvel arsenal pendant la partie
-  const applyLoadout = (ids) => {
-    const g = gameRef.current;
-    saveLoadout(ids);
-    g?.weapons?.setLoadout(ids);
-    const socket = getSocket();
-    if (socket.connected) socket.emit('player:loadout', { loadout: ids });
+  // API des commandes tactiles
+  const touchApi = {
+    move: (x, y) => gameRef.current?.player?.setTouchMove(x, y),
+    look: (dx, dy) => gameRef.current?.player?.lookBy(dx, dy),
+    key: (code, down) => gameRef.current?.player?.setKey(code, down),
+    fireDown: () => gameRef.current?.weapons?.triggerDown(),
+    fireUp: () => gameRef.current?.weapons?.triggerUp(),
+    adsDown: () => gameRef.current?.weapons?.setAds(true),
+    adsUp: () => gameRef.current?.weapons?.setAds(false),
+    reload: () => gameRef.current?.weapons?.reload(),
+    rift: () => gameRef.current?.doRift?.(),
+    interact: () => gameRef.current?.doOpenChest?.(),
+    toggleTab: () => setShowScoreboard((v) => !v),
+    toggleMic: () => gameRef.current?.voice?.toggleMute(),
+    pause: () => {
+      const g = gameRef.current;
+      if (g) g.touchPlaying = false;
+      g?.player?.setTouchMove(0, 0);
+      g?.weapons?.triggerUp();
+      g?.weapons?.setAds(false);
+      setLocked(false);
+    },
   };
 
   const min = Math.floor(timeLeft / 60);
@@ -674,6 +774,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
     );
   }
 
+  const game_weapon = (id) => weaponDefs.find((w) => w.id === id);
   const gap = weaponHud ? Math.max(5, Math.min(48, 5 + weaponHud.spread * 5)) : 8;
   const hpClass = regenOn ? 'regen' : myHp > 50 ? '' : myHp > 25 ? 'mid' : 'low';
   const ammoClass = !weaponHud ? '' : weaponHud.ammo === 0 ? 'empty' : weaponHud.ammo <= weaponHud.mag * 0.25 ? 'low' : '';
@@ -788,13 +889,6 @@ export default function GameCanvas({ user, roomCode, onExit }) {
 
         {weaponHud && (
           <div className="hud-br">
-            <div className="slots">
-              {weaponHud.slots.map((sl, i) => (
-                <div key={sl.id} className={`slot ${i === weaponHud.index ? 'active' : ''} ${sl.rarity ? 'loot' : ''}`} style={sl.rarity ? { '--rar': (RAR[sl.rarity] || RAR.common).color } : undefined}>
-                  <b>{i + 1}</b>{sl.name}
-                </div>
-              ))}
-            </div>
             <div className="ammo-panel">
               <div className="wtype">{weaponHud.type}</div>
               <div className="wname">{weaponHud.name}</div>
@@ -818,16 +912,71 @@ export default function GameCanvas({ user, roomCode, onExit }) {
           </div>
         )}
 
+        {weaponHud && (
+          <div className="hotbar" onPointerDown={(e) => e.stopPropagation()}>
+            {Array.from({ length: 5 }).map((_, i) => {
+              const sl = weaponHud.slots[i];
+              const col = sl ? (RAR[sl.rarity || 'common'] || RAR.common).color : null;
+              return (
+                <div
+                  key={i}
+                  className={`hb-slot ${sl ? '' : 'empty'} ${sl && i === weaponHud.index ? 'active' : ''}`}
+                  style={col ? { '--rar': col } : undefined}
+                  onPointerDown={(e) => { if (sl) { e.preventDefault(); gameRef.current?.weapons?.select(i); } }}
+                >
+                  <b>{i + 1}</b>
+                  {sl && (icons[sl.id] ? <img src={icons[sl.id]} alt={sl.name} draggable={false} /> : <span className="hb-name">{sl.name}</span>)}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {mapRef && <canvas ref={miniRef} className="minimap" width={190} height={190} />}
+
         <div className="hud-hint">
-          Clic tirer · Clic droit viser · R recharger · 1-5 armes · F coffre · C glisser · E rift · M micro · Tab scores
+          Clic tirer · Clic droit viser · R recharger · 1-5 armes · F coffre · C glisser · E rift · M micro · Tab inventaire + carte
         </div>
       </div>
 
       {showScoreboard && (
-        <div className="full-overlay scoreboard-overlay">
-          <div className="score-table-wrap">
-            <h3>Classement</h3>
-            <ScoreTable rows={scores} mode={mode} myId={socket.id} teamKills={teamKills} />
+        <div className="full-overlay tab-overlay">
+          <div className="tab-panel">
+            <div className="tab-col tab-inv">
+              <h3>Équipement</h3>
+              <div className="tab-slots">
+                {Array.from({ length: 5 }).map((_, i) => {
+                  const sl = weaponHud && weaponHud.slots[i];
+                  const w = sl && game_weapon(sl.id);
+                  const col = sl ? (RAR[sl.rarity || 'common'] || RAR.common).color : null;
+                  return (
+                    <div key={i} className={`tab-slot ${sl ? '' : 'empty'} ${sl && weaponHud.index === i ? 'active' : ''}`} style={col ? { '--rar': col } : undefined}>
+                      <b>{i + 1}</b>
+                      {sl ? (
+                        <>
+                          {icons[sl.id] ? <img src={icons[sl.id]} alt="" draggable={false} /> : <span />}
+                          <div className="ts-info">
+                            <strong>{sl.name}</strong>
+                            <small style={{ color: col }}>{(RAR[sl.rarity || 'common'] || RAR.common).label}{w ? ` · ${w.damage}${w.pellets > 1 ? `×${w.pellets}` : ''} dégâts · ${w.mag} balles` : ''}</small>
+                          </div>
+                        </>
+                      ) : <em>Vide</em>}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="muted small">Trouve des armes dans les coffres dorés (<span className="kbd">F</span>). Tu perds tout à ta mort.</p>
+            </div>
+            <div className="tab-col tab-map">
+              <h3>Carte</h3>
+              <canvas ref={mapRef} className="tab-map-canvas" width={620} height={620} />
+              <p className="muted small"><span style={{ color: '#ffc94a' }}>■</span> coffre · <span style={{ color: '#fff' }}>➤</span> toi{mode === 'koth' ? <> · <span style={{ color: '#58d68d' }}>●</span> colline</> : null}</p>
+            </div>
+            <div className="tab-col tab-scores">
+              <h3>Classement</h3>
+              <ScoreTable rows={scores} mode={mode} myId={socket.id} teamKills={teamKills} />
+            </div>
+            {isTouch && <button className="tab-close" onPointerDown={(e) => { e.stopPropagation(); setShowScoreboard(false); }}>✕ Fermer</button>}
           </div>
         </div>
       )}
@@ -884,13 +1033,14 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         </div>
       )}
 
-      {!locked && !matchEnd && alive && !showArsenal && !showCredits && (
+      {!locked && !matchEnd && alive && !showCredits && !showTuto && !touchEdit && (
         <div className="full-overlay pause" onClick={enterGame}>
           <div className="pause-menu" onClick={(e) => e.stopPropagation()}>
             <h2 className="logo">PIXEL<span>RIFT</span></h2>
             <p className="pause-sub">// EN PAUSE</p>
             <button className="menu-item primary" onClick={enterGame}>Reprendre<small>Clique n'importe où pour jouer</small></button>
-            <button className="menu-item" onClick={() => setShowArsenal(true)}>Arsenal<small>Changer mes 4 armes</small></button>
+            <button className="menu-item" onClick={() => setShowTuto(true)}>Tutoriel<small>Comment jouer (PC et mobile)</small></button>
+            {isTouch && <button className="menu-item" onClick={() => setTouchEdit(true)}>Personnaliser les touches<small>Déplacer, agrandir, rendre transparent</small></button>}
             <button className="menu-item" onClick={() => { const v = gameRef.current?.voice; if (v) v.setMode(voiceStatus.mode === 'ptt' ? 'open' : 'ptt'); }}>
               Micro : {voiceStatus.mode === 'ptt' ? 'appuyer pour parler (V)' : 'toujours ouvert'}<small>Clique pour changer de mode</small>
             </button>
@@ -904,17 +1054,19 @@ export default function GameCanvas({ user, roomCode, onExit }) {
             <span><span className="kbd">C</span></span><span>Glisser (en courant)</span>
             <span><span className="kbd">Clic</span></span><span>Tirer · <span className="kbd">Clic D.</span> viser</span>
             <span><span className="kbd">R</span></span><span>Recharger</span>
-            <span><span className="kbd">1-4</span></span><span>Armes (ou molette)</span>
+            <span><span className="kbd">1-5</span></span><span>Armes de l'inventaire (ou molette)</span>
             <span><span className="kbd">E</span></span><span>Rift (téléportation)</span>
             <span><span className="kbd">F</span></span><span>Ouvrir un coffre (butin)</span>
             <span><span className="kbd">M</span></span><span>Couper / rétablir le micro</span>
-            <span><span className="kbd">Tab</span></span><span>Classement · <span className="kbd">F3</span> FPS</span>
+            <span><span className="kbd">Tab</span></span><span>Équipement + carte + classement · <span className="kbd">F3</span> FPS</span>
           </div>
         </div>
       )}
 
-      {showArsenal && (
-        <Loadout onClose={() => setShowArsenal(false)} onSave={applyLoadout} />
+      {showTuto && <Tutorial defaultMobile={isTouch} onClose={() => setShowTuto(false)} />}
+
+      {isTouch && (locked || touchEdit) && !matchEnd && !showTuto && (
+        <TouchControls api={touchApi} nearChest={nearChest && alive} micMuted={!!voiceStatus.muted} editing={touchEdit} onDone={() => setTouchEdit(false)} />
       )}
 
       {showCredits && (

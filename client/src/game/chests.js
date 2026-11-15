@@ -106,6 +106,8 @@ export function createChests(scene) {
     return best;
   }
 
+  const list = () => Array.from(items.values()).map((it) => ({ x: it.group.position.x, z: it.group.position.z, opened: !!it.data.opened }));
+
   function tick(dt) {
     t += dt;
     for (const it of items.values()) {
@@ -129,7 +131,7 @@ export function createChests(scene) {
     bursts.length = 0;
   }
 
-  return { setState, open, respawn, nearest, tick, dispose };
+  return { setState, open, respawn, nearest, list, tick, dispose };
 }
 
 // ============================================================

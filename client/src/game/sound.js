@@ -81,3 +81,18 @@ export function playHurt() {
   noise(0.18, { freq: 300, gain: 0.7, type: 'lowpass' });
 }
 export function playSwitch() { noise(0.05, { freq: 2500, gain: 0.25 }); }
+
+// v6 : décors destructibles
+export function playBoom(vol = 1) {
+  if (vol < 0.03) return;
+  volMul = vol;
+  try {
+    noise(0.9, { freq: 160, gain: 1.0, type: 'lowpass' });
+    tone(70, 0.55, { type: 'sawtooth', gain: 0.5, slide: 0.35 });
+  } finally { volMul = 1; }
+}
+export function playBreak(vol = 1) {
+  if (vol < 0.03) return;
+  volMul = vol;
+  try { noise(0.18, { freq: 1400, gain: 0.55, type: 'bandpass' }); } finally { volMul = 1; }
+}

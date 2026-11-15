@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { MAP_HALF } from './mapLayout.js';
 
 const PLAYER_HEIGHT = 1.7;
 const PLAYER_RADIUS = 0.4;
@@ -21,7 +20,7 @@ const LUNAR_GRAVITY = 0.28;
 const LUNAR_JUMP = 1.12;
 const LUNAR_DURATION = 9;
 
-export function createPlayer(camera, canvas, world, spawn) {
+export function createPlayer(camera, canvas, world, spawn, half = 170) {
   const state = {
     position: new THREE.Vector3(spawn?.x ?? 0, spawn?.y ?? PLAYER_HEIGHT, spawn?.z ?? 15),
     velocity: new THREE.Vector3(),
@@ -39,6 +38,9 @@ export function createPlayer(camera, canvas, world, spawn) {
     slideDirZ: 0,
     eyeDrop: 0,
     lunarT: 0,          // secondes restantes de gravité lunaire
+    touchMode: false,   // v6 : commandes tactiles (pas de verrouillage du pointeur)
+    touchX: 0,          // joystick : -1 gauche … +1 droite
+    touchY: 0,          // joystick : -1 arrière … +1 avant
   };
   let pads = [];
   let slideWasDown = false;
@@ -46,6 +48,7 @@ export function createPlayer(camera, canvas, world, spawn) {
   const keys = {};
 
   const onClick = () => {
+    if (state.touchMode) return;
     if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
   };
   canvas.addEventListener('click', onClick);
@@ -87,12 +90,20 @@ export function createPlayer(camera, canvas, world, spawn) {
   const tryZ = new THREE.Vector3();
 
   function update(dt) {
-    const forward = (keys['KeyW'] || keys['KeyZ'] || keys['ArrowUp'] ? 1 : 0) - (keys['KeyS'] || keys['ArrowDown'] ? 1 : 0);
-    const right = (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0) - (keys['KeyA'] || keys['KeyQ'] || keys['ArrowLeft'] ? 1 : 0);
+    let forward = (keys['KeyW'] || keys['KeyZ'] || keys['ArrowUp'] ? 1 : 0) - (keys['KeyS'] || keys['ArrowDown'] ? 1 : 0);
+    let right = (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0) - (keys['KeyA'] || keys['KeyQ'] || keys['ArrowLeft'] ? 1 : 0);
+    // Joystick tactile : analogique (petite inclinaison = marche lente), course automatique à fond
+    let analog = 1;
+    const touchMag = Math.hypot(state.touchX, state.touchY);
+    if (state.touchMode && touchMag > 0.08) {
+      forward = state.touchY; right = state.touchX;
+      analog = Math.min(1, touchMag);
+    }
+    const autoSprint = state.touchMode && touchMag > 0.88 && forward > 0.5;
 
-    state.moving = forward !== 0 || right !== 0;
-    state.sprinting = !!(keys['ShiftLeft'] || keys['ShiftRight']) && forward > 0 && state.speedMult >= 0.95 && !state.sliding;
-    const speed = (state.sprinting ? SPRINT : SPEED) * state.speedMult;
+    state.moving = Math.abs(forward) > 0.01 || Math.abs(right) > 0.01;
+    state.sprinting = (!!(keys['ShiftLeft'] || keys['ShiftRight']) || autoSprint) && forward > 0 && state.speedMult >= 0.95 && !state.sliding;
+    const speed = (state.sprinting ? SPRINT : SPEED) * state.speedMult * (analog < 1 ? Math.max(0.35, analog) : 1);
 
     // Zones de gravité lunaire
     if (state.lunarT > 0) state.lunarT = Math.max(0, state.lunarT - dt);
@@ -106,7 +117,7 @@ export function createPlayer(camera, canvas, world, spawn) {
     const lunar = state.lunarT > 0;
 
     // Diagonales : on normalise pour ne pas aller plus vite
-    const len = Math.hypot(forward, right) || 1;
+    const len = Math.max(1, Math.hypot(forward, right));
     const f = forward / len;
     const r = right / len;
 
@@ -157,7 +168,7 @@ export function createPlayer(camera, canvas, world, spawn) {
     if (!blocked(tryZ)) state.position.z = tryZ.z;
 
     // Limites de la carte (sécurité)
-    const lim = MAP_HALF - 2;
+    const lim = half - 2;
     state.position.x = Math.max(-lim, Math.min(lim, state.position.x));
     state.position.z = Math.max(-lim, Math.min(lim, state.position.z));
 
@@ -218,6 +229,17 @@ export function createPlayer(camera, canvas, world, spawn) {
 
   function setPads(list) { pads = list || []; }
 
+  // --- Commandes tactiles (v6) ---
+  function setTouchMode(on) { state.touchMode = !!on; if (!on) { state.touchX = 0; state.touchY = 0; } }
+  function setTouchMove(x, y) { state.touchX = x; state.touchY = y; }
+  function lookBy(dx, dy) {            // dx, dy en pixels d'écran
+    const k = 0.0042 * state.sensitivity;
+    state.yaw -= dx * k;
+    state.pitch -= dy * k;
+    state.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, state.pitch));
+  }
+  function setKey(code, down) { keys[code] = !!down; }
+
   function teleport(x, y, z) {
     state.position.set(x, y, z);
     state.velocity.set(0, 0, 0);
@@ -230,5 +252,5 @@ export function createPlayer(camera, canvas, world, spawn) {
     document.removeEventListener('keyup', onKeyUp);
   }
 
-  return { state, update, teleport, canStandAt, setPads, dispose, keys };
+  return { state, update, teleport, canStandAt, setPads, dispose, keys, setTouchMode, setTouchMove, lookBy, setKey };
 }

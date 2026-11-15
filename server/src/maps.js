@@ -8,6 +8,7 @@
 // ============================================================
 import { MAPS, DEFAULT_MAP, MAP_IDS, generateMapById } from '../../client/src/game/maps.js';
 import { ASSETS } from '../../client/src/game/assetCatalog.js';
+import { DESTRUCTIBLES } from '../../client/src/game/destructibles.js';
 import { SPAWNS } from './weapons.js';
 
 export { MAPS, DEFAULT_MAP, MAP_IDS };
@@ -104,7 +105,15 @@ export function getMap(id) {
     return { x, z };
   };
 
+  // Décors destructibles : identifiant = index dans layout.props (identique chez le client)
+  const destructibles = new Map();
+  layout.props.forEach((p, i) => {
+    const d = DESTRUCTIBLES[p.key];
+    if (d) destructibles.set(i, { id: i, key: p.key, x: p.x, y: p.y || 0, z: p.z, ...d });
+  });
+
   const data = {
+    destructibles,
     id: mapId,
     name: layout.name || (MAPS.find((m) => m.id === mapId) || {}).name || mapId,
     half: layout.half,

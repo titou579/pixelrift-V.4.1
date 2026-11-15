@@ -4,7 +4,8 @@ import CharacterStage from '../components/CharacterStage.jsx';
 import { getSocket } from '../socket.js';
 import { getProfile } from '../api.js';
 import { loadCatalog, skinById } from '../game/catalogStore.js';
-import { getGameConfig, getLoadout } from '../game/gameConfig.js';
+import { getGameConfig } from '../game/gameConfig.js';
+import Tutorial from '../components/Tutorial.jsx';
 
 const TEAM = [
   { name: 'Alpha', cls: 'team-a' },
@@ -20,7 +21,8 @@ export default function Lobby({ user, roomCode: initialRoom, onPlay, onRoomChang
   const [connecting, setConnecting] = useState(false);
   const [profile, setProfile] = useState(null);
   const [catalogReady, setCatalogReady] = useState(false);
-  const [weaponId, setWeaponId] = useState('assault');
+  const [weaponId, setWeaponId] = useState('pistol');
+  const [showTuto, setShowTuto] = useState(false);
   const [announce, setAnnounce] = useState('');
   const chatBox = useRef(null);
   const [copied, setCopied] = useState(false);
@@ -37,7 +39,6 @@ export default function Lobby({ user, roomCode: initialRoom, onPlay, onRoomChang
         setProfile(p.profile);
         setCatalogReady(true);
         cfgRef.current = cfg;
-        setWeaponId(getLoadout(cfg)[0]);
         setAnnounce(c.event.announcement || '');
       })
       .catch((e) => setError(e.message));
@@ -89,7 +90,6 @@ export default function Lobby({ user, roomCode: initialRoom, onPlay, onRoomChang
   // Les autres joueurs voient ton arme dans le salon : on envoie ton arsenal dès qu'on est dans un salon
   const roomCodeNow = room ? room.code : null;
   useEffect(() => {
-    if (roomCodeNow && cfgRef.current) socket.emit('player:loadout', { loadout: getLoadout(cfgRef.current) });
   }, [roomCodeNow, catalogReady]);
 
   function createRoom() {
@@ -166,6 +166,7 @@ export default function Lobby({ user, roomCode: initialRoom, onPlay, onRoomChang
     return (
       <div className="screen menu-screen">
         <div className="watermark">RIFT</div>
+        {showTuto && <Tutorial defaultMobile={window.matchMedia && window.matchMedia('(pointer: coarse)').matches} onClose={() => setShowTuto(false)} />}
 
         <div className="menu-hero">
           {mySkin && <CharacterStage variant="hero" slots={[{ key: 'me', skin: mySkin, weaponId }]} />}
@@ -200,9 +201,9 @@ export default function Lobby({ user, roomCode: initialRoom, onPlay, onRoomChang
             </div>
             {error && <p className="error">{error}</p>}
 
-            <button className="menu-item" onClick={onArsenal}>
-              Arsenal
-              <small>Choisis tes 4 armes</small>
+            <button className="menu-item" onClick={() => setShowTuto(true)}>
+              Tutoriel
+              <small>Comment jouer · PC et mobile</small>
             </button>
             <button className="menu-item" onClick={onProfile}>
               Quartier général

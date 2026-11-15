@@ -19,70 +19,70 @@
 
 export const WEAPONS = {
   pistol: {
-    id: 'pistol', name: 'Pistolet', type: 'Pistolet',
+    id: 'pistol', name: 'Pistolet', type: 'Pistolet', starter: true,
     damage: 18, pellets: 1, fireRate: 6.5, mode: 'semi',
     mag: 15, reload: 1.1, spread: 1.3, adsSpread: 0.4,
     range: [30, 80], falloff: 0.55, headMult: 1.8, recoil: 0.9, moveMult: 1.05,
     zoom: 62, scope: false, tracer: '#ffe9a8',
   },
   deagle: {
-    id: 'deagle', name: 'Pistolet lourd', type: 'Pistolet',
+    id: 'deagle', name: 'Pistolet lourd', type: 'Pistolet', rarity: 'common',
     damage: 38, pellets: 1, fireRate: 2.6, mode: 'semi',
     mag: 8, reload: 1.7, spread: 1.0, adsSpread: 0.25,
     range: [35, 90], falloff: 0.55, headMult: 1.8, recoil: 3.2, moveMult: 1.0,
     zoom: 62, scope: false, tracer: '#ffd27a',
   },
   revolver: {
-    id: 'revolver', name: 'Revolver', type: 'Revolver',
+    id: 'revolver', name: 'Revolver', type: 'Revolver', rarity: 'rare',
     damage: 55, pellets: 1, fireRate: 1.5, mode: 'semi',
     mag: 6, reload: 2.5, spread: 0.8, adsSpread: 0.1,
     range: [45, 110], falloff: 0.6, headMult: 2.0, recoil: 4.5, moveMult: 1.0,
     zoom: 58, scope: false, tracer: '#ff9b5e',
   },
   smg: {
-    id: 'smg', name: 'Pistolet-mitrailleur', type: 'SMG',
+    id: 'smg', name: 'Pistolet-mitrailleur', type: 'SMG', rarity: 'common',
     damage: 13, pellets: 1, fireRate: 15, mode: 'auto',
     mag: 32, reload: 1.8, spread: 3.2, adsSpread: 1.6,
     range: [18, 50], falloff: 0.4, headMult: 1.5, recoil: 0.7, moveMult: 1.1,
     zoom: 64, scope: false, tracer: '#7fe3ff',
   },
   assault: {
-    id: 'assault', name: "Fusil d'assaut", type: 'Fusil',
+    id: 'assault', name: "Fusil d'assaut", type: 'Fusil', rarity: 'rare',
     damage: 22, pellets: 1, fireRate: 9.5, mode: 'auto',
     mag: 30, reload: 2.2, spread: 2.2, adsSpread: 0.7,
     range: [40, 95], falloff: 0.5, headMult: 1.7, recoil: 1.2, moveMult: 0.95,
     zoom: 60, scope: false, tracer: '#ffef7a',
   },
   bullpup: {
-    id: 'bullpup', name: 'Bullpup (rafale)', type: 'Fusil',
+    id: 'bullpup', name: 'Bullpup (rafale)', type: 'Fusil', rarity: 'epic',
     damage: 24, pellets: 1, fireRate: 14, mode: 'burst', burst: 3, burstDelay: 0.32,
     mag: 30, reload: 2.1, spread: 1.6, adsSpread: 0.45,
     range: [45, 105], falloff: 0.5, headMult: 1.7, recoil: 1.0, moveMult: 0.97,
     zoom: 58, scope: false, tracer: '#b6ff7a',
   },
   shotgun: {
-    id: 'shotgun', name: 'Fusil à pompe', type: 'Fusil à pompe',
+    id: 'shotgun', name: 'Fusil à pompe', type: 'Fusil à pompe', rarity: 'rare',
     damage: 11, pellets: 9, fireRate: 1.1, mode: 'semi',
     mag: 6, reload: 2.8, spread: 5.2, adsSpread: 3.6,
     range: [8, 26], falloff: 0.12, headMult: 1.4, recoil: 5.5, moveMult: 0.92,
     zoom: 66, scope: false, tracer: '#ffb27a',
   },
   sawedoff: {
-    id: 'sawedoff', name: 'Double canon', type: 'Fusil à pompe',
+    id: 'sawedoff', name: 'Double canon', type: 'Fusil à pompe', rarity: 'common',
     damage: 12, pellets: 12, fireRate: 2.2, mode: 'semi',
     mag: 2, reload: 2.3, spread: 7.0, adsSpread: 5.2,
     range: [5, 18], falloff: 0.08, headMult: 1.3, recoil: 6.5, moveMult: 1.0,
     zoom: 68, scope: false, tracer: '#ff8b5e',
   },
   dmr: {
-    id: 'dmr', name: 'Fusil de précision', type: 'Tireur d’élite',
+    id: 'dmr', name: 'Fusil de précision', type: 'Tireur d’élite', rarity: 'epic',
     damage: 46, pellets: 1, fireRate: 3.1, mode: 'semi',
     mag: 10, reload: 2.6, spread: 1.4, adsSpread: 0.1,
     range: [70, 160], falloff: 0.65, headMult: 2.0, recoil: 2.6, moveMult: 0.9,
     zoom: 40, scope: false, tracer: '#7ad0ff',
   },
   sniper: {
-    id: 'sniper', name: 'Sniper', type: 'Tireur d’élite',
+    id: 'sniper', name: 'Sniper', type: 'Tireur d’élite', rarity: 'legendary',
     damage: 95, pellets: 1, fireRate: 0.85, mode: 'semi',
     mag: 5, reload: 3.4, spread: 6.0, adsSpread: 0.03,
     range: [120, 260], falloff: 0.85, headMult: 2.0, recoil: 7.0, moveMult: 0.85,
@@ -208,7 +208,7 @@ export function rollLoot(rand = Math.random) {
   let t = rand() * total;
   let rarity = 'common';
   for (const r of Object.values(RARITIES)) { t -= r.weight; if (t <= 0) { rarity = r.id; break; } }
-  const pool = Object.values(LOOT).filter((w) => w.rarity === rarity);
+  const pool = Object.values(WEAPONS).filter((w) => w.rarity === rarity && !w.starter);
   const w = pool[Math.floor(rand() * pool.length)];
   return { weaponId: w.id, rarity, heal: RARITIES[rarity].heal };
 }
@@ -224,6 +224,8 @@ export const MODES = {
 };
 
 export const DEFAULT_LOADOUT = ['pistol', 'smg', 'assault', 'shotgun'];
+export const START_INVENTORY = ['pistol'];   // v6 : on démarre avec le pistolet, le reste vient des coffres
+export const INVENTORY_SLOTS = 5;
 
 export const REGEN = {
   delayMs: 5000,       // sans tirer ni être touché pendant ce temps...
@@ -267,7 +269,7 @@ export function isValidLoadout(ids) {
     Array.isArray(ids) &&
     ids.length >= 1 && ids.length <= 4 &&
     new Set(ids).size === ids.length &&
-    ids.every((id) => WEAPONS[id] && !WEAPONS[id].loot)
+    ids.every((id) => WEAPONS[id])
   );
 }
 

@@ -17,6 +17,8 @@ import {
   MODES,
   GG_LADDER,
   rollLoot,
+  START_INVENTORY,
+  INVENTORY_SLOTS,
 } from './weapons.js';
 import { getMap, MAPS, DEFAULT_MAP, MAP_IDS } from './maps.js';
 import { BOT_LEVELS, MAX_BOTS, createBot, equipBot, resetBot, tickBots } from './bots.js';
@@ -30,6 +32,7 @@ const CHEST_RESPAWN_MS = 75 * 1000;
 const CHEST_REACH = 6;            // distance max (m) pour ouvrir un coffre (marge pour la latence)
 const HILL_DURATION_MS = 45 * 1000;
 const BOT_RESPAWN_MS = 3000;
+const PROP_RESPAWN_MS = 120 * 1000;
 export const KILL_TARGETS = MODES.ffa.targets;
 export const TEAM_NAMES = ['Alpha', 'Bravo'];
 
@@ -61,6 +64,8 @@ function createRoom(hostId) {
     chests: [],
     koth: null,
     kothPts: new Map(),
+    props: new Map(),      // id de décor détruit -> { respawnAt }
+    propHp: new Map(),     // id -> coups restants
   };
 }
 
@@ -86,7 +91,8 @@ function tracerColor(id) {
   return t.color;
 }
 // Une arme est utilisable si elle est dans l'arsenal du joueur ou si c'est son arme de butin
-const canUse = (p, id) => p.loadout.includes(id) || p.lootWeapon === id;
+const canUse = (p, id) => (p.isBot ? true : (p.inventory || []).includes(id));
+const invPayload = (p, extra = {}) => ({ inventory: p.inventory, select: Math.max(0, p.inventory.indexOf(p.weaponId)), ...extra });
 
 export function setupGameServer(io) {
   const roomState = (code) => {
@@ -136,12 +142,23 @@ export function setupGameServer(io) {
     chest.opened = true;
     chest.respawnAt = Date.now() + CHEST_RESPAWN_MS;
     const loot = rollLoot();
-    p.lootWeapon = loot.weaponId;
+    if (!p.isBot) {
+      // 1er emplacement libre ; sinon remplace l'arme en main (jamais en double)
+      if (!p.inventory.includes(loot.weaponId)) {
+        if (p.inventory.length < INVENTORY_SLOTS) p.inventory.push(loot.weaponId);
+        else p.inventory[Math.max(0, p.inventory.indexOf(p.weaponId))] = loot.weaponId;
+      }
+      p.weaponId = loot.weaponId;
+    } else p.lootWeapon = loot.weaponId;
     p.hp = Math.min(PLAYER_MAX_HP, p.hp + loot.heal);
     io.to(code).emit('player:hp', { id: p.id, hp: Math.round(p.hp), regen: true });
     io.to(code).emit('chest:opened', { id: chest.id, by: p.id, byName: p.username, weaponId: loot.weaponId, rarity: loot.rarity });
     if (p.isBot) equipBot(p, room, { io, code }, true);
-    else io.to(p.id).emit('loot:granted', { weaponId: loot.weaponId, rarity: loot.rarity, heal: loot.heal });
+    else {
+      io.to(p.id).emit('inv:update', invPayload(p));
+      io.to(p.id).emit('loot:granted', { weaponId: loot.weaponId, rarity: loot.rarity, heal: loot.heal });
+      io.to(code).emit('player:weapon', { id: p.id, weaponId: loot.weaponId });
+    }
     return true;
   }
   function nearestChest(room, p, maxDist) {
@@ -174,8 +191,58 @@ export function setupGameServer(io) {
     p.loadout = [w];
     p.weaponId = w;
     p.lootWeapon = null;
+    p.inventory = [w];
     if (p.isBot) equipBot(p, room, { io, code }, true);
-    else io.to(p.id).emit('loadout:forced', { loadout: [w], level: p.ggLevel, ladder: GG_LADDER.length });
+    else io.to(p.id).emit('inv:update', invPayload(p, { gg: { level: p.ggLevel, ladder: GG_LADDER.length } }));
+    if (!p.isBot) io.to(code).emit('player:weapon', { id: p.id, weaponId: w });
+  }
+
+  function resetInventory(code, p) {
+    if (p.isBot) return;
+    p.inventory = [...START_INVENTORY];
+    p.weaponId = START_INVENTORY[0];
+    p.loadout = [...START_INVENTORY];
+    io.to(p.id).emit('inv:update', invPayload(p, { gg: null }));
+    io.to(code).emit('player:weapon', { id: p.id, weaponId: p.weaponId });
+  }
+
+  // ---------- Décors destructibles ----------
+  const destroyedList = (room) => Array.from(room.props.keys());
+  function destroyProp(code, room, id, shooter, delay = 0) {
+    const map = getMap(room.map);
+    const d = map.destructibles.get(id);
+    if (!d || room.props.has(id)) return;
+    room.props.set(id, { respawnAt: Date.now() + PROP_RESPAWN_MS });
+    io.to(code).emit('prop:destroyed', { id, type: d.type, x: d.x, y: d.y, z: d.z });
+    if (d.type === 'breakable') {
+      if (shooter && shooter.alive && shooter.hp < PLAYER_MAX_HP) {
+        shooter.hp = Math.min(PLAYER_MAX_HP, shooter.hp + 6);
+        io.to(code).emit('player:hp', { id: shooter.id, hp: Math.round(shooter.hp), regen: true });
+      }
+      return;
+    }
+    // Explosion : dégâts de zone décroissants, réaction en chaîne
+    const R = d.radius || 7;
+    for (const t of room.players.values()) {
+      if (!t.alive || !t.inGame) continue;
+      const dist = Math.hypot(t.position.x - d.x, t.position.z - d.z, (t.position.y - 1.2) - d.y);
+      if (dist > R) continue;
+      const dmg = Math.max(8, Math.round((d.dmg || 80) * (1 - dist / R)));
+      if (shooter && t.id === shooter.id) {
+        // l'auteur ne peut pas se tuer avec son propre décor
+        t.hp = Math.max(1, t.hp - Math.round(dmg * 0.4));
+        t.lastCombat = Date.now();
+        io.to(code).emit('player:hit', { targetId: t.id, hp: Math.round(t.hp), shooterId: t.id, shooterName: t.username, damage: Math.round(dmg * 0.4), head: false });
+      } else if (shooter) {
+        if (room.mode === 'team' && shooter.team === t.team) continue;
+        if (applyDamage(code, room, shooter, t, dmg, 'explosion', false)) return;
+      }
+    }
+    for (const o of map.destructibles.values()) {
+      if (room.props.has(o.id) || o.id === id) continue;
+      const od = Math.hypot(o.x - d.x, o.z - d.z);
+      if (od < (o.type === 'explosive' ? 6 : 5)) setTimeout(() => { if (rooms.get(code) === room && room.matchStatus === 'playing') destroyProp(code, room, o.id, shooter); }, 150 + Math.random() * 250);
+    }
   }
 
   // ---------- Bots ----------
@@ -239,6 +306,7 @@ export function setupGameServer(io) {
     room.teamKills = [0, 0];
     resetChests(room);
     room.koth = null;
+    room.props.clear(); room.propHp.clear();
     if (room.mode === 'koth') rotateHill(room);
     const taken = [];
     for (const p of room.players.values()) {
@@ -255,6 +323,7 @@ export function setupGameServer(io) {
       taken.push(p.position);
       if (room.mode === 'gungame') giveGungameWeapon(room, code, p);
       else if (p.isBot) resetBot(p, room, { io, code }, p.position);
+      else resetInventory(code, p);
       if (!p.isBot) io.to(p.id).emit('player:respawned', { id: p.id, position: p.position });
     }
     const teams = {};
@@ -264,6 +333,7 @@ export function setupGameServer(io) {
       ladder: GG_LADDER.length,
     });
     io.to(code).emit('chests:state', { chests: chestsPublic(room) });
+    io.to(code).emit('props:state', { destroyed: [] });
     if (room.koth) io.to(code).emit('koth:state', kothPublic(room));
     broadcastScores(code);
     broadcastRoom(code);
@@ -334,11 +404,7 @@ export function setupGameServer(io) {
         p.ggLevel = 0;
         p.position = pickSpawn(taken, teamMode ? p.team : null, map.spawns);
         taken.push(p.position);
-        if (!p.isBot) {
-          p.loadout = [...(p.baseLoadout || DEFAULT_LOADOUT)];
-          p.weaponId = p.loadout[0];
-          io.to(p.id).emit('loadout:restore', { loadout: p.loadout });
-        }
+        resetInventory(code, p);
       }
       io.to(code).emit('match:reset');
       broadcastRoom(code);
@@ -360,6 +426,9 @@ export function setupGameServer(io) {
       if (room.matchStatus !== 'playing') continue;
       for (const c of room.chests) {
         if (c.opened && now >= c.respawnAt) { c.opened = false; io.to(code).emit('chest:respawn', { id: c.id }); }
+      }
+      for (const [pid, st] of Array.from(room.props)) {
+        if (now >= st.respawnAt) { room.props.delete(pid); room.propHp.delete(pid); io.to(code).emit('prop:respawn', { id: pid }); }
       }
       if (room.mode === 'koth' && room.koth) {
         if (now >= room.koth.endsAt) rotateHill(room);
@@ -544,9 +613,10 @@ export function setupGameServer(io) {
         team: autoTeam(room),
         lastSeen: Date.now(),
         lastCombat: 0,
-        loadout: [...saved],
+        loadout: [...START_INVENTORY],
         baseLoadout: [...saved],
-        weaponId: saved[0],
+        inventory: [...START_INVENTORY],
+        weaponId: START_INVENTORY[0],
         lootWeapon: null,
         ggLevel: 0,
         shotTokens: 3, lastTokenAt: Date.now(),
@@ -711,8 +781,9 @@ export function setupGameServer(io) {
           timeLeft: MATCH_DURATION - (Date.now() - room.matchStartTime), ladder: GG_LADDER.length,
         });
         socket.emit('chests:state', { chests: chestsPublic(room) });
+        socket.emit('props:state', { destroyed: destroyedList(room) });
         if (room.koth) socket.emit('koth:state', kothPublic(room));
-        if (room.mode === 'gungame') giveGungameWeapon(room, code, p);
+        if (room.mode === 'gungame') giveGungameWeapon(room, code, p); else resetInventory(code, p);
         broadcastScores(code);
       }
     });
@@ -734,17 +805,8 @@ export function setupGameServer(io) {
       socket.to(currentRoom).emit('player:state', { id: socket.id, position, rotation });
     });
 
-    // Choix des armes (4 max) — validé côté serveur, mémorisé dans le profil
-    socket.on('player:loadout', ({ loadout }) => {
-      const { room, p, code } = me();
-      if (!p || !isValidLoadout(loadout)) return;
-      if (room && room.mode === 'gungame' && room.matchStatus === 'playing') return; // arme imposée
-      p.baseLoadout = [...loadout];
-      p.loadout = loadout;
-      if (!p.loadout.includes(p.weaponId) && p.lootWeapon !== p.weaponId) p.weaponId = loadout[0];
-      saveLoadout(p.login, loadout);
-      broadcastRoom(code);
-    });
+    // (v6) Plus d'arsenal : les armes viennent des coffres. Message conservé pour les anciens clients.
+    socket.on('player:loadout', () => {});
 
     // Arme en main (visible par les autres joueurs)
     socket.on('player:weapon', ({ weaponId } = {}) => {
@@ -781,6 +843,23 @@ export function setupGameServer(io) {
       if (!chest || chest.opened) return;
       if (Math.hypot(chest.x - p.position.x, chest.z - p.position.z) > CHEST_REACH) return;
       openChest(code, room, p, chest);
+    });
+
+    // Tir sur un décor destructible (le client détecte l'impact, le serveur compte les coups)
+    socket.on('prop:hit', ({ id } = {}) => {
+      const { room, p, code } = me();
+      if (!room || !p || !p.alive || room.matchStatus !== 'playing' || !Number.isInteger(id)) return;
+      const now = Date.now();
+      p.propTokens = Math.min(10, (p.propTokens ?? 10) + ((now - (p.propAt || now)) / 1000) * 10);
+      p.propAt = now;
+      if (p.propTokens < 1) return;
+      p.propTokens -= 1;
+      const d = getMap(room.map).destructibles.get(id);
+      if (!d || room.props.has(id)) return;
+      if (Math.hypot(d.x - p.position.x, d.z - p.position.z) > 230) return;
+      const hp = (room.propHp.has(id) ? room.propHp.get(id) : d.hp) - 1;
+      room.propHp.set(id, hp);
+      if (hp <= 0) destroyProp(code, room, id, p);
     });
 
     // Chat vocal : relais de la signalisation WebRTC entre deux joueurs du salon
@@ -847,6 +926,7 @@ export function setupGameServer(io) {
       p.lastSeen = Date.now();
       io.to(code).emit('player:respawned', { id: socket.id, position: p.position });
       if (room.mode === 'gungame') giveGungameWeapon(room, code, p); // l'arme du niveau est restituée
+      else resetInventory(code, p);                                  // le butin est perdu à la mort
     });
 
     socket.on('player:rift', () => {

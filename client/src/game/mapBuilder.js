@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ASSETS } from './assetCatalog.js';
 import { loadAsset, cloneModel } from './assetLoader.js';
 import { generateMapById } from './maps.js';
+import { DESTRUCTIBLES } from './destructibles.js';
 import { createCollisionWorld } from './collision.js';
 
 const CHUNK = 100; // les props sont regroupés par carrés de 100 m (pour que le culling fonctionne)
@@ -251,7 +252,11 @@ export async function buildMap(scene, { spawns, mapId = 'ville', onProgress } = 
   // 8. Props : instancing par (modèle × carré de 100 m) + colliders
   const groups = new Map(); // "key|cx|cz" -> placements
   const skinnedPlacements = [];
-  for (const p of layout.props) {
+  const propRefs = new Map();      // idx du décor -> [{ im, i, m }] (pour le cacher quand il est détruit)
+  const propColliders = new Map(); // idx -> collider
+  for (let idx = 0; idx < layout.props.length; idx++) {
+    const p = layout.props[idx];
+    p.idx = idx;
     const info = infos.get(p.key);
     if (!info) continue;
 
@@ -267,11 +272,15 @@ export async function buildMap(scene, { spawns, mapId = 'ville', onProgress } = 
         const c = Math.abs(Math.cos(p.rot)), s = Math.abs(Math.sin(p.rot));
         let hx = (c * w + s * d) / 2;
         let hz = (s * w + c * d) / 2;
-        if (coll === 'trunk') { hx = Math.min(hx, 0.35 * p.s); hz = Math.min(hz, 0.35 * p.s); }
-        colliders.push({
+        // Hitbox affinée : troncs fins (on passe entre les branches), objets un peu resserrés (pas d'accroche sur les bords)
+        if (coll === 'trunk') { hx = Math.min(hx, 0.3 * p.s); hz = Math.min(hz, 0.3 * p.s); }
+        else { hx *= 0.94; hz *= 0.94; }
+        const col = {
           min: { x: p.x - hx, y: p.y, z: p.z - hz },
           max: { x: p.x + hx, y: p.y + h, z: p.z + hz },
-        });
+        };
+        if (DESTRUCTIBLES[p.key]) { col.prop = idx; propColliders.set(idx, col); }
+        colliders.push(col);
       }
     }
 
@@ -311,9 +320,14 @@ export async function buildMap(scene, { spawns, mapId = 'ville', onProgress } = 
         place.compose(vp, q, vs);
         tmp.multiplyMatrices(place, meshLocal);
         im.setMatrixAt(i, tmp);
+        if (DESTRUCTIBLES[p.key]) {
+          let a = propRefs.get(p.idx);
+          if (!a) { a = []; propRefs.set(p.idx, a); }
+          a.push({ im, i, m: tmp.clone() });
+        }
       });
       im.instanceMatrix.needsUpdate = true;
-      im.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       im.computeBoundingSphere();
       scene.add(im);
       disposables.push(im);
@@ -374,9 +388,29 @@ export async function buildMap(scene, { spawns, mapId = 'ville', onProgress } = 
     `🗺️  Map : ${layout.props.length} objets, ${drawables} lots instanciés, ${world.count} colliders`
   );
 
+  // Décors destructibles : cacher / rétablir un objet et son collider
+  const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
+  const saved = new Map();
+  const props = {
+    destroy(idx) {
+      for (const r of propRefs.get(idx) || []) { r.im.setMatrixAt(r.i, ZERO); r.im.instanceMatrix.needsUpdate = true; }
+      const c = propColliders.get(idx);
+      if (c && !saved.has(idx)) { saved.set(idx, [c.min.y, c.max.y]); c.min.y = -1000; c.max.y = -999; }
+    },
+    restore(idx) {
+      for (const r of propRefs.get(idx) || []) { r.im.setMatrixAt(r.i, r.m); r.im.instanceMatrix.needsUpdate = true; }
+      const c = propColliders.get(idx);
+      const s = saved.get(idx);
+      if (c && s) { c.min.y = s[0]; c.max.y = s[1]; saved.delete(idx); }
+    },
+    restoreAll() { for (const idx of Array.from(saved.keys())) this.restore(idx); },
+    get(idx) { return layout.props[idx]; },
+  };
+
   return {
     world,
     layout,
+    props,
     pads: layout.pads,
     stats: { props: layout.props.length, drawables, colliders: world.count },
     dispose() {

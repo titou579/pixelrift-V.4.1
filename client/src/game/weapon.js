@@ -58,7 +58,7 @@ function glowTexture() {
 
 export function createWeaponSystem({
   scene, camera, player, world, remotes, defs, loadout, showTargets = true,
-  onShoot, onFired, onScope, onHitFeedback, onTargetHit, onWeaponChange,
+  onShoot, onPropHit, onFired, onScope, onHitFeedback, onTargetHit, onWeaponChange,
 }) {
   const defById = new Map(defs.map((d) => [d.id, d]));
   let tracerOverride = null;   // null = couleur de l'arme ; nombre = couleur ; 'rainbow' = arc-en-ciel
@@ -240,6 +240,19 @@ export function createWeaponSystem({
     sound.playSwitch();
     applyActive(true);
   }
+  // (v6) Inventaire fourni par le serveur : jusqu'à 5 armes, on garde les munitions des armes déjà en main
+  function setInventory(ids, select = 0) {
+    const old = new Map(slots.map((x) => [x.def.id, x]));
+    slots = ids.filter((id) => defById.has(id)).map((id) => old.get(id) || {
+      def: defById.get(id), ammo: defById.get(id).mag, reloadEnd: 0, nextShotAt: 0, burstLeft: 0,
+    });
+    if (!slots.length) return;
+    cancelReload();
+    index = Math.max(0, Math.min(select, slots.length - 1));
+    adsWanted = false;
+    sound.playSwitch();
+    applyActive(true);
+  }
   // Arme trouvée dans un coffre : emplacement 5, remplace le butin précédent, mise en main immédiate
   function giveLoot(id) {
     const def = defById.get(id);
@@ -323,6 +336,7 @@ export function createWeaponSystem({
     const dir = new THREE.Vector3();
     const end = new THREE.Vector3();
     const firstDir = new THREE.Vector3();
+    const propHits = new Set();
 
     for (let i = 0; i < def.pellets; i++) {
       // direction aléatoire dans un cône autour du viseur
@@ -335,7 +349,8 @@ export function createWeaponSystem({
       if (i === 0) firstDir.copy(dir);
 
       // 1. Décor (murs, voitures, arbres...)
-      const wallT = world.raycast(_origin.x, _origin.y, _origin.z, dir.x, dir.y, dir.z, maxDist);
+      const wh = world.raycastHit(_origin.x, _origin.y, _origin.z, dir.x, dir.y, dir.z, maxDist);
+      const wallT = wh.t;
       let endT = Math.min(wallT, maxDist);
       let hitKind = wallT < maxDist ? 'wall' : 'none';
 
@@ -367,6 +382,7 @@ export function createWeaponSystem({
         onTargetHit && onTargetHit(score);
       }
 
+      if (hitKind === 'wall' && wh.box && wh.box.prop !== undefined) propHits.add(wh.box.prop);
       if (hitKind === 'none') endT = Math.min(maxDist, 120);
       end.copy(_origin).addScaledVector(dir, endT);
       spawnTracer(_muzzle, end, tracerColorFor(def), def.pellets > 1 ? 0.01 : 0.02);
@@ -388,6 +404,7 @@ export function createWeaponSystem({
     kickPending += def.recoil * (0.7 + Math.random() * 0.5);
     player.state.yaw += (Math.random() - 0.5) * def.recoil * 0.25 * DEG;
 
+    if (propHits.size && onPropHit) onPropHit(Array.from(propHits));
     if (onFired) onFired({ weaponId: def.id, dir: [firstDir.x, firstDir.y, firstDir.z] });
     if (anyHit) {
       onShoot && onShoot({ weaponId: def.id, hits: Array.from(hitMap.values()) });
@@ -571,7 +588,7 @@ export function createWeaponSystem({
   ready.then(() => applyActive(false));
 
   return {
-    ready, update, remoteShot, setTracer(v) { tracerOverride = v; }, triggerDown, triggerUp, setAds, reload, select, cycle, setLoadout, giveLoot, clearLoot,
+    ready, update, remoteShot, setTracer(v) { tracerOverride = v; }, triggerDown, triggerUp, setAds, reload, select, cycle, setLoadout, setInventory, giveLoot, clearLoot,
     getHud, getScore: () => score, dispose,
     resetAmmo() { slots.forEach((x) => { x.ammo = x.def.mag; x.reloadEnd = 0; }); },
   };

@@ -23,7 +23,7 @@ function mulberry32(a) {
   };
 }
 
-function makeBuilder(seed, half) {
+export function makeBuilder(seed, half) {
   const rand = mulberry32(seed);
   const rnd = (a, b) => a + rand() * (b - a);
   const pick = (arr) => arr[Math.floor(rand() * arr.length)];
@@ -92,7 +92,7 @@ function makeBuilder(seed, half) {
 // =====================================================================
 //  ENTREPÔT 17
 // =====================================================================
-function entrepot() {
+function entrepot(opts = {}) {
   const B = makeBuilder(170717, 60);
   const { out, put, tryPut, scatter, box, stairs, spawnRing, addChest, addHill, wall, rnd, pick } = B;
   out.name = 'Entrepôt 17';
@@ -106,15 +106,25 @@ function entrepot() {
     [24, 0], [-24, 0], [0, 24], [0, -24],
   ]);
 
-  // Enceinte : murs de béton + bandeaux lumineux
-  const H = 60;
-  wall(0, -(H - 1), 2 * H, 2, 9, 0x7b7f86);
-  wall(0, H - 1, 2 * H, 2, 9, 0x7b7f86);
-  wall(-(H - 1), 0, 2, 2 * H - 4, 9, 0x7b7f86);
-  wall(H - 1, 0, 2, 2 * H - 4, 9, 0x7b7f86);
-  for (const [x, z, w, d] of [[0, -(H - 2.05), 2 * H - 6, 0.12], [0, H - 2.05, 2 * H - 6, 0.12], [-(H - 2.05), 0, 0.12, 2 * H - 10], [H - 2.05, 0, 0.12, 2 * H - 10]]) {
-    box(x, 6.4, z, w, 0.35, d, 0xffc861, { emissive: true, collide: false });
+  // Enceinte : murs de béton + bandeaux lumineux, avec une porte de 9 m au milieu de chaque mur
+  const H = 60, G = 4.5;
+  for (const z of [-(H - 1), H - 1]) {
+    wall(-(H + G) / 2, z, H - G, 2, 9, 0x7b7f86);
+    wall((H + G) / 2, z, H - G, 2, 9, 0x7b7f86);
   }
+  for (const x of [-(H - 1), H - 1]) {
+    wall(x, -((H - 2) + G) / 2, 2, (H - 2) - G, 9, 0x7b7f86);
+    wall(x, ((H - 2) + G) / 2, 2, (H - 2) - G, 9, 0x7b7f86);
+  }
+  for (const z of [-(H - 2.05), H - 2.05]) {
+    box(-(H - 3 + G) / 2 - 0.5, 6.4, z, H - G - 3, 0.35, 0.12, 0xffc861, { emissive: true, collide: false });
+    box((H - 3 + G) / 2 + 0.5, 6.4, z, H - G - 3, 0.35, 0.12, 0xffc861, { emissive: true, collide: false });
+  }
+  for (const x of [-(H - 2.05), H - 2.05]) {
+    box(x, 6.4, -(H - 6 + G) / 2 - 0.5, 0.12, 0.35, H - G - 6, 0xffc861, { emissive: true, collide: false });
+    box(x, 6.4, (H - 6 + G) / 2 + 0.5, 0.12, 0.35, H - G - 6, 0xffc861, { emissive: true, collide: false });
+  }
+  void opts;
 
   // Coffres, collines
   for (const [x, z] of [[12, 24], [-12, -24], [12, -24], [-12, 24], [24, 12], [-24, -12], [24, -12], [-24, 12], [0, 36], [0, -36], [36, 0], [-36, 0]]) addChest(x, z);
@@ -177,11 +187,11 @@ function entrepot() {
 // =====================================================================
 //  CAMP DE SURVIE
 // =====================================================================
-function survie() {
-  const B = makeBuilder(750115, 75);
+function survie(opts = {}) {
+  const B = makeBuilder(opts.seed ?? 750115, 75);
   const { out, put, tryPut, scatter, box, stairs, spawnRing, addChest, addHill, rnd, pick, rand } = B;
-  out.name = 'Camp de survie';
-  out.groundColor = 0x4f7d3a;
+  out.name = opts.name || 'Camp de survie';
+  out.groundColor = opts.groundColor ?? 0x4f7d3a;
   out.ground.push({ x: 0, z: 0, w: 46, d: 46, color: 0x7a6a47 });         // terre battue du camp
 
   const sp = [];
@@ -297,9 +307,10 @@ function toon() {
   return out;
 }
 
-export const ARENA_BUILDERS = { entrepot, survie, toon };
-export function generateArena(id) {
+const foret = (opts = {}) => survie({ seed: 331771, name: 'Forêt noire', groundColor: 0x3f6b30, ...opts });
+export const ARENA_BUILDERS = { entrepot, survie, toon, foret };
+export function generateArena(id, opts = {}) {
   const fn = ARENA_BUILDERS[id];
   if (!fn) throw new Error(`Carte inconnue : ${id}`);
-  return fn();
+  return fn(opts);
 }

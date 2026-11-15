@@ -28,6 +28,19 @@ Il affiche une adresse `https://….trycloudflare.com` à envoyer à ton ami (el
 
 Pas besoin de GitHub ni de Render pour jouer. Les comptes sont sauvegardés dans `server/data/players.json` sur ton PC.
 
+## ✨ Nouveautés v6
+
+- **Monde Rift** (carte par défaut, 690 m) : la Ville Rift, l'Entrepôt 17, la Zone Toon, le Camp de survie et une Forêt noire sont **réunis sur une seule carte**, reliés par des routes de ceinture, avec 4 avant-postes, des forêts et 87 coffres. Les 4 cartes plus petites restent choisissables pour des parties rapides. Code : `client/src/game/world.js`.
+- **Plus d'arsenal : tout vient des coffres.** On démarre avec un pistolet ; 5 emplacements d'inventaire ; 22 armes réparties en 4 raretés ; le butin est perdu à la mort. Barre d'inventaire avec icônes d'armes (rendues automatiquement depuis les modèles 3D, `weaponIcons.js`).
+- **Tab** : équipement, carte du monde (coffres fermés, ta position, zone du mode), classement. **Mini-carte** en jeu.
+- **Décors interactifs** (`destructibles.js`, table partagée client/serveur) : tonneaux, bonbonnes et voitures explosent (dégâts de zone, réaction en chaîne) ; caisses, boîtes et pots se brisent ; tout réapparaît après 2 minutes. Les tentes sont traversables ; les troncs d'arbres sont fins ; hitbox resserrées.
+- **13 nouveaux skins** dans la boutique (commun → légendaire).
+- **Mobile** : joystick, regard au doigt, boutons (tir, viser, saut, glisse, recharger, rift, coffre, carte, micro, pause), taille adaptée automatiquement à l'écran, **boutons déplaçables** (menu pause → Personnaliser les touches : taille, transparence, réinitialisation), plein écran + paysage. Code : `components/TouchControls.jsx`.
+- **Tutoriel** PC et mobile : à la première partie, puis depuis le salon et le menu pause.
+
+### Ajouter un décor destructible
+Ajoute la clé du modèle dans `client/src/game/destructibles.js` (`explosive` ou `breakable`, nombre de tirs). Rien d'autre à faire.
+
 ## ✨ Nouveautés v5
 
 - **Bots** : l'hôte ajoute de 1 à 7 bots dans le salon, avec 4 niveaux (Recrue, Soldat, Vétéran, Élite : vitesse, temps de réaction, précision, cadence). Ils se déplacent en évitant les obstacles, ouvrent des coffres, capturent la colline, et un match peut démarrer avec un seul joueur humain. Code : `server/src/bots.js`.
@@ -51,6 +64,7 @@ Pas besoin de GitHub ni de Render pour jouer. Les comptes sont sauvegardés dans
 | C (en courant) | Glisser : élan rapide, caméra basse, fonctionne aussi pour esquiver |
 | M | Couper / rétablir le micro (le micro est **ouvert en permanence** ; mode « appuyer pour parler » avec V dans le menu pause) |
 | F | Ouvrir un coffre à butin (à moins de 4 m) |
+| Tab (maintenu) | Équipement + carte + classement |
 | Clic gauche / clic droit | Tirer / viser (zoom + précision, lunette pour le sniper) |
 | R | Recharger |
 | 1 à 4 / molette | Changer d'arme (5 = arme trouvée dans un coffre) |

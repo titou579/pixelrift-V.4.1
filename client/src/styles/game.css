@@ -258,3 +258,94 @@
 .hud-box.koth.mine .val{color:#4fa8ff}
 .hud-box.koth.contested .val{color:#e74c3c}
 .hud-voice.muted{color:#e4412f}
+
+/* ===== v6 : barre d'inventaire façon Fortnite ===== */
+.hotbar{position:absolute;left:50%;bottom:calc(10px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);display:flex;gap:6px;pointer-events:auto;z-index:4}
+.hb-slot{position:relative;width:92px;height:50px;background:rgba(10,11,12,.72);border:1px solid rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;overflow:hidden}
+.hb-slot b{position:absolute;left:5px;top:2px;font-size:11px;color:#9aa0a6}
+.hb-slot img{max-width:84px;max-height:42px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.6))}
+.hb-slot .hb-name{font-size:11px;color:#ddd;text-align:center;padding:0 4px}
+.hb-slot:not(.empty){border-color:var(--rar,#b6bcc4);box-shadow:inset 0 -3px 0 var(--rar,#b6bcc4)}
+.hb-slot.active{background:rgba(255,255,255,.16);transform:translateY(-5px);box-shadow:inset 0 -3px 0 var(--rar,#b6bcc4),0 0 14px color-mix(in srgb,var(--rar,#fff) 55%,transparent)}
+.hb-slot.empty{opacity:.45}
+.hud-br{bottom:calc(72px + env(safe-area-inset-bottom,0px))}
+
+/* mini-carte */
+.minimap{position:absolute;left:12px;top:64px;width:150px;height:150px;border:2px solid rgba(255,255,255,.35);border-radius:50%;background:#1b1d20;box-shadow:0 0 12px rgba(0,0,0,.6);pointer-events:none}
+
+/* ===== panneau Tab : équipement + carte + classement ===== */
+.tab-overlay{background:rgba(6,7,9,.78);display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:20}
+.tab-panel{position:relative;display:grid;grid-template-columns:minmax(240px,300px) minmax(280px,min(62vh,620px)) minmax(240px,340px);gap:18px;max-width:96vw;max-height:94vh;overflow:auto;padding:16px;background:rgba(14,15,18,.9);border:1px solid rgba(255,255,255,.14);pointer-events:auto}
+.tab-col h3{margin:0 0 8px;letter-spacing:.14em;text-transform:uppercase;font-size:13px;color:#ffc94a}
+.tab-slots{display:flex;flex-direction:column;gap:6px}
+.tab-slot{position:relative;display:flex;align-items:center;gap:10px;min-height:54px;padding:4px 10px 4px 22px;background:rgba(255,255,255,.05);border-left:4px solid var(--rar,#444)}
+.tab-slot.active{background:rgba(255,255,255,.14)}
+.tab-slot.empty{opacity:.4;border-left-color:#444}
+.tab-slot b{position:absolute;left:6px;top:4px;font-size:11px;color:#9aa0a6}
+.tab-slot img{width:84px;height:38px;object-fit:contain}
+.tab-slot em{color:#888}
+.ts-info{display:flex;flex-direction:column;line-height:1.2}
+.ts-info small{font-size:11px}
+.tab-map-canvas{width:100%;aspect-ratio:1/1;border:1px solid rgba(255,255,255,.2);background:#1b1d20}
+.tab-close{position:absolute;right:8px;top:8px;padding:8px 12px;background:#c0392b;color:#fff;border:0}
+
+/* ===== tactile ===== */
+.touch-layer{position:fixed;inset:0;z-index:15;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.tc-look{position:absolute;inset:0;touch-action:none}
+.tc-stick,.tc-btn{position:absolute;transform:translate(-50%,-50%);touch-action:none}
+.tc-stick{border-radius:50%;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.4)}
+.tc-knob{position:absolute;left:50%;top:50%;border-radius:50%;background:rgba(255,255,255,.55);border:2px solid rgba(255,255,255,.9);pointer-events:none}
+.tc-btn{border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;letter-spacing:.04em;color:#fff;text-align:center;background:rgba(20,22,26,.55);border:2px solid rgba(255,255,255,.5)}
+.tc-btn.fire{background:rgba(231,76,60,.5);border-color:rgba(255,160,150,.9)}
+.tc-btn.down{background:rgba(255,255,255,.5);color:#111}
+.tc-btn.interact{background:rgba(255,201,74,.55);border-color:#ffe08a;color:#1a1305}
+.tc-btn.interact.pulse{animation:chestPulse 1s ease-in-out infinite}
+.tc-btn.muted{background:rgba(192,57,43,.6)}
+.touch-layer.edit{background:rgba(0,0,0,.55)}
+.tc-btn.editing,.tc-stick.editing{outline:2px dashed #ffc94a;cursor:grab}
+.tc-label{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:12px;color:#ffc94a}
+.tc-editbar{position:absolute;left:50%;top:10px;transform:translateX(-50%);display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:center;max-width:90vw;padding:8px 14px;background:rgba(10,11,12,.92);border:1px solid #ffc94a;color:#fff;font-size:13px}
+.tc-editbar label{display:flex;gap:6px;align-items:center}
+.tc-editbtns{display:flex;gap:8px}
+.tc-editbtns button{padding:6px 12px}
+.tc-editbtns .primary{background:#ffc94a;color:#14110a;border:0;font-weight:700}
+
+/* ===== tutoriel ===== */
+.tuto-overlay{z-index:60;background:rgba(5,6,8,.86);display:flex;align-items:center;justify-content:center;pointer-events:auto}
+.tuto-box{width:min(680px,94vw);max-height:92vh;overflow:auto;padding:22px 26px;background:#14161a;border:1px solid rgba(255,201,74,.5);color:#e8eaec}
+.tuto-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.tuto-tag{color:#ffc94a;letter-spacing:.2em;font-size:12px}
+.tuto-switch button{padding:4px 12px;background:transparent;color:#aaa;border:1px solid #444}
+.tuto-switch button.on{background:#ffc94a;color:#14110a;border-color:#ffc94a}
+.tuto-box h2{margin:10px 0 6px;font-size:26px;letter-spacing:.04em}
+.tuto-body{font-size:16px;line-height:1.5;min-height:170px}
+.tuto-body ul{margin:6px 0 6px 18px;padding:0}
+.tuto-keys{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
+.tuto-tip{padding:8px 12px;background:rgba(255,201,74,.1);border-left:3px solid #ffc94a;font-size:14px}
+.tuto-dots{display:flex;gap:6px;justify-content:center;margin:12px 0}
+.tuto-dots i{width:9px;height:9px;border-radius:50%;background:#444;cursor:pointer}
+.tuto-dots i.on{background:#ffc94a}
+.tuto-foot{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.tuto-foot button{padding:8px 16px;margin-left:6px}
+.tuto-foot .primary{background:#ffc94a;color:#14110a;border:0;font-weight:700}
+.tuto-foot .ghost{background:transparent;color:#999;border:0}
+
+/* ===== petits écrans / tactile : le HUD s'adapte ===== */
+@media (pointer:coarse), (max-width:900px){
+  .hud-hint{display:none}
+  .hotbar{gap:4px}
+  .hb-slot{width:min(76px,13vw);height:min(44px,9vh)}
+  .hb-slot img{max-width:min(68px,11vw);max-height:min(36px,8vh)}
+  .minimap{width:min(120px,22vh);height:min(120px,22vh);top:min(54px,10vh)}
+  .hud-br{bottom:calc(56px + env(safe-area-inset-bottom,0px));transform:scale(.8);transform-origin:right bottom}
+  .compass{transform:translateX(-50%) scale(.75);transform-origin:top center}
+  .tab-panel{grid-template-columns:1fr;font-size:13px}
+  .tab-map-canvas{max-width:60vh}
+  .crosshair{transform:scale(.85)}
+  .pause-menu{max-height:90vh;overflow:auto}
+  .controls{display:none}
+}
+@media (pointer:coarse){
+  .killfeed{transform:scale(.8);transform-origin:top right}
+  .chest-prompt{display:none}
+}

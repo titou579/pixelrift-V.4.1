@@ -15,7 +15,7 @@ export function createEngine(canvas) {
     antialias: true,
     powerPreference: 'high-performance',
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, RENDER_SETTINGS.maxPixelRatio));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches) ? 1.15 : RENDER_SETTINGS.maxPixelRatio));
   renderer.setSize(window.innerWidth, window.innerHeight);
 
   const scene = new THREE.Scene();
