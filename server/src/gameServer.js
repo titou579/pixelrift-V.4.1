@@ -22,6 +22,7 @@ import {
 } from './weapons.js';
 import { getMap, MAPS, DEFAULT_MAP, MAP_IDS } from './maps.js';
 import { BOT_LEVELS, MAX_BOTS, createBot, equipBot, resetBot, tickBots } from './bots.js';
+import { validatePlayerState } from './validation.js';
 
 const rooms = new Map();
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -621,6 +622,7 @@ export function setupGameServer(io) {
         ggLevel: 0,
         shotTokens: 3, lastTokenAt: Date.now(),
         fireTokens: 3, lastFireAt: Date.now(),
+        lastStateAt: 0, lastStatePacketAt: 0, riftCooldownUntil: 0, riftMoveUntil: 0,
         matchHeadshots: 0, matchJoinedAt: 0,
       };
       if (humans(room).length === 0) room.host = socket.id;
@@ -795,14 +797,23 @@ export function setupGameServer(io) {
       broadcastRoom(code);
     });
 
-    socket.on('player:state', ({ position, rotation }) => {
-      const { room, p } = me();
+    socket.on('player:state', ({ position, rotation } = {}) => {
+      const { room, p, code } = me();
       if (!room || !p || !p.alive) return;
-      if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y) || !Number.isFinite(position.z)) return;
-      p.position = position;
-      p.rotation = rotation;
-      p.lastSeen = Date.now();
-      socket.to(currentRoom).emit('player:state', { id: socket.id, position, rotation });
+      const now = Date.now();
+      // Le client envoie 20 états/s ; on ignore les rafales anormales.
+      if (p.lastStatePacketAt && now - p.lastStatePacketAt < 20) return;
+      p.lastStatePacketAt = now;
+      const elapsed = p.lastStateAt ? now - p.lastStateAt : now - (p.lastSeen || now);
+      const riftAllowance = p.riftMoveUntil >= now ? 9.5 : 0;
+      const state = validatePlayerState(getMap(room.map), p.position, position, rotation, elapsed, riftAllowance);
+      if (!state) return;
+      p.position = state.position;
+      p.rotation = state.rotation;
+      p.lastStateAt = now;
+      p.lastSeen = now;
+      p.riftMoveUntil = 0;
+      socket.to(code).emit('player:state', { id: socket.id, position: p.position, rotation: p.rotation });
     });
 
     // (v6) Plus d'arsenal : les armes viennent des coffres. Message conservé pour les anciens clients.
@@ -821,7 +832,7 @@ export function setupGameServer(io) {
       const { room, p, code } = me();
       if (!room || room.matchStatus !== 'playing') return;
       const def = WEAPONS[weaponId];
-      if (!p || !p.alive || !def || !canUse(p, weaponId)) return;
+      if (!p || !p.inGame || !p.alive || !def || p.weaponId !== weaponId || !canUse(p, weaponId)) return;
       if (!Array.isArray(dir) || dir.length !== 3 || !dir.every((n) => Number.isFinite(n))) return;
       const now = Date.now();
       p.fireTokens = Math.min(3, p.fireTokens + ((now - p.lastFireAt) / 1000) * def.fireRate * 1.4);
@@ -838,7 +849,7 @@ export function setupGameServer(io) {
     // Ouverture d'un coffre (le serveur tire le butin et vérifie la distance)
     socket.on('chest:open', ({ id } = {}) => {
       const { room, p, code } = me();
-      if (!room || !p || !p.alive || room.matchStatus !== 'playing') return;
+      if (!room || !p || !p.inGame || !p.alive || room.matchStatus !== 'playing') return;
       const chest = room.chests.find((c) => c.id === id);
       if (!chest || chest.opened) return;
       if (Math.hypot(chest.x - p.position.x, chest.z - p.position.z) > CHEST_REACH) return;
@@ -848,7 +859,7 @@ export function setupGameServer(io) {
     // Tir sur un décor destructible (le client détecte l'impact, le serveur compte les coups)
     socket.on('prop:hit', ({ id } = {}) => {
       const { room, p, code } = me();
-      if (!room || !p || !p.alive || room.matchStatus !== 'playing' || !Number.isInteger(id)) return;
+      if (!room || !p || !p.inGame || !p.alive || room.matchStatus !== 'playing' || !Number.isInteger(id)) return;
       const now = Date.now();
       p.propTokens = Math.min(10, (p.propTokens ?? 10) + ((now - (p.propAt || now)) / 1000) * 10);
       p.propAt = now;
@@ -874,9 +885,9 @@ export function setupGameServer(io) {
     socket.on('player:shoot', ({ weaponId, hits } = {}) => {
       const { room, p: shooter, code } = me();
       if (!room || room.matchStatus !== 'playing') return;
-      if (!shooter || !shooter.alive) return;
+      if (!shooter || !shooter.inGame || !shooter.alive) return;
       const def = WEAPONS[weaponId];
-      if (!def || !canUse(shooter, weaponId)) return;
+      if (!def || shooter.weaponId !== weaponId || !canUse(shooter, weaponId)) return;
       if (!Array.isArray(hits) || hits.length === 0 || hits.length > 8) return;
 
       // Anti-triche léger : limite de cadence (jetons qui se rechargent)
@@ -893,7 +904,7 @@ export function setupGameServer(io) {
       for (const h of hits) {
         if (pelletsLeft <= 0) break;
         const target = room.players.get(h?.id);
-        if (!target || !target.alive || target.id === shooter.id) continue;
+        if (!target || !target.inGame || !target.alive || target.id === shooter.id) continue;
         if (room.mode === 'team' && target.team === shooter.team) continue; // pas de tir allié
 
         const dist = Math.hypot(
@@ -902,6 +913,9 @@ export function setupGameServer(io) {
           target.position.z - shooter.position.z
         );
         if (dist > def.range[1] * 1.6 + 8) continue; // trop loin pour cette arme
+        // Le client effectue aussi le raycast ; cette vérification serveur empêche les tirs à travers les grands obstacles.
+        const map = getMap(room.map);
+        if (dist > 2 && !map.hasLOS(shooter.position.x, shooter.position.z, target.position.x, target.position.z)) continue;
 
         const n = Math.max(1, Math.min(pelletsLeft, Math.floor(h.n) || 1));
         pelletsLeft -= n;
@@ -930,11 +944,16 @@ export function setupGameServer(io) {
     });
 
     socket.on('player:rift', () => {
-      const { p } = me();
-      if (p) registerRiftUse(p.login);
+      const { room, p } = me();
+      if (!room || !p || !p.inGame || !p.alive) return;
+      const now = Date.now();
+      if (now < (p.riftCooldownUntil || 0)) return;
+      p.riftCooldownUntil = now + 4000;
+      p.riftMoveUntil = now + 700;
+      registerRiftUse(p.login);
     });
 
-    socket.on('chat:message', ({ text }) => {
+    socket.on('chat:message', ({ text } = {}) => {
       const { p, code } = me();
       if (!p || typeof text !== 'string' || !text.trim() || text.length > 200) return;
       io.to(code).emit('chat:message', { username: p.username, team: p.team, text: text.trim(), time: Date.now() });

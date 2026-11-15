@@ -1,6 +1,6 @@
 # 🌌 PIXELRIFT
 
-Mini battle royale 3D jouable dans le navigateur — mécanique signature : le **Rift** (mini portail qui te téléporte à courte distance, cooldown court).
+**Version 6.1** — mini battle royale 3D jouable dans le navigateur, avec une mécanique signature : le **Rift**, un mini-portail de déplacement à courte portée.
 
 ## Lancer le jeu sur ton PC
 
@@ -24,19 +24,33 @@ cloudflared tunnel --url http://localhost:5173
 ```
 
 Il affiche une adresse `https://….trycloudflare.com` à envoyer à ton ami (elle change à chaque lancement, et le jeu s'arrête pour lui quand tu fermes ton PC ou le tunnel).
-**Avant de partager cette adresse, change les mots de passe dans `server/.env`** : le mot de passe local par défaut ne doit jamais être exposé sur internet.
+**Avant de partager cette adresse, change les mots de passe de tous les comptes depuis le jeu** (`Quartier général → Compte`). Important : `ACCOUNT_*_PWD` dans `server/.env` ne sert qu'à créer les comptes lors du premier démarrage ; une fois les comptes créés, modifier ces variables ne change pas les mots de passe déjà enregistrés. N'expose jamais les comptes avec le mot de passe local par défaut.
 
-Pas besoin de GitHub ni de Render pour jouer. Les comptes sont sauvegardés dans `server/data/players.json` sur ton PC.
+Pas besoin de GitHub ni de Render pour jouer. Les profils de progression sont sauvegardés dans `server/data/players.json` ; les comptes et les sessions sont enregistrés séparément dans `server/data/`.
 
 ## ✨ Nouveautés v6
 
-- **Monde Rift** (carte par défaut, 690 m) : la Ville Rift, l'Entrepôt 17, la Zone Toon, le Camp de survie et une Forêt noire sont **réunis sur une seule carte**, reliés par des routes de ceinture, avec 4 avant-postes, des forêts et 87 coffres. Les 4 cartes plus petites restent choisissables pour des parties rapides. Code : `client/src/game/world.js`.
-- **Plus d'arsenal : tout vient des coffres.** On démarre avec un pistolet ; 5 emplacements d'inventaire ; 22 armes réparties en 4 raretés ; le butin est perdu à la mort. Barre d'inventaire avec icônes d'armes (rendues automatiquement depuis les modèles 3D, `weaponIcons.js`).
+- **6 cartes jouables** : Monde Rift (immense), Ville Rift, Entrepôt 17, Camp de survie, Zone Toon et Forêt noire.
+- **Monde Rift** (carte par défaut, 690 m) : la Ville Rift, l'Entrepôt 17, la Zone Toon, le Camp de survie et une Forêt noire sont **réunis sur une seule carte**, reliés par des routes de ceinture, avec 4 avant-postes, des forêts et 87 coffres. Les 5 cartes plus petites restent choisissables pour des parties rapides : Ville Rift, Entrepôt 17, Camp de survie, Zone Toon et Forêt noire. Code : `client/src/game/world.js`.
+- **Plus d'arsenal : tout vient des coffres.** On démarre avec un pistolet ; 5 emplacements d'inventaire ; 23 armes au total (10 armes de base et 13 armes de butin) réparties en 4 raretés ; le butin est perdu à la mort. Barre d'inventaire avec icônes d'armes (rendues automatiquement depuis les modèles 3D, `weaponIcons.js`).
 - **Tab** : équipement, carte du monde (coffres fermés, ta position, zone du mode), classement. **Mini-carte** en jeu.
 - **Décors interactifs** (`destructibles.js`, table partagée client/serveur) : tonneaux, bonbonnes et voitures explosent (dégâts de zone, réaction en chaîne) ; caisses, boîtes et pots se brisent ; tout réapparaît après 2 minutes. Les tentes sont traversables ; les troncs d'arbres sont fins ; hitbox resserrées.
-- **13 nouveaux skins** dans la boutique (commun → légendaire).
+- **14 nouveaux skins** dans la boutique (commun → légendaire), dont Aurore ajouté en V6.1.
 - **Mobile** : joystick, regard au doigt, boutons (tir, viser, saut, glisse, recharger, rift, coffre, carte, micro, pause), taille adaptée automatiquement à l'écran, **boutons déplaçables** (menu pause → Personnaliser les touches : taille, transparence, réinitialisation), plein écran + paysage. Code : `components/TouchControls.jsx`.
 - **Tutoriel** PC et mobile : à la première partie, puis depuis le salon et le menu pause.
+
+- **Inventaire** : le joueur commence avec un pistolet ; les autres armes sont obtenues dans les coffres, jusqu'à 5 emplacements.
+
+### Correctifs de maintenance V6.1
+
+- Nouvelle carte **Forêt noire** réactivée dans le salon : variante forestière du Camp de survie, avec ambiance et disposition végétale distinctes.
+- Nouveau skin procédural **Aurore** : violet profond, visière menthe lumineuse (épique, 1 800 NovaCoins, niveau 8).
+- Les coffres tirent désormais uniquement parmi les armes explicitement marquées comme butin, en respectant leur rareté.
+- Validation serveur des positions et rotations reçues, avec marge contrôlée pour le Rift et les mouvements rapides.
+- Contrôle de ligne de vue côté serveur avant d'appliquer des dégâts, en complément du raycast client.
+- Cadence de l'événement de position limitée, cooldown Rift vérifié côté serveur et messages incomplets ignorés proprement.
+- Sessions expirées après 7 jours, cookies invalides tolérés et protection contre l'accumulation des clés de limitation de connexion.
+- Tests automatisés natifs (sans dépendance) : `npm test`.
 
 ### Ajouter un décor destructible
 Ajoute la clé du modèle dans `client/src/game/destructibles.js` (`explosive` ou `breakable`, nombre de tirs). Rien d'autre à faire.
@@ -75,7 +89,7 @@ Ajoute la clé du modèle dans `client/src/game/destructibles.js` (`explosive` o
 
 ## Skins, boutique et personnage
 
-- **9 skins** : la *Recrue* (skin de base, gratuit) et 8 variantes de couleur du mannequin : Ombre, Désert (commun) ; Polaire, Écarlate, Urbain (rare) ; Néon (épique) ; Doré, Spectre (légendaire). Plus 5 traînées de balles.
+- **23 skins intégrés** : Recrue, Ombre, Désert, Polaire, Écarlate, Urbain, Néon, Doré, Spectre, Forêt, Marine, Rouille, Améthyste, Cuivre, Banquise, Toxique, Magma, Cyberpunk, Sakura, Platine, Éclipse, Dragon et Aurore. Plus 5 traînées de balles.
 - Ton personnage apparaît **au centre du menu** avec la première arme de ton arsenal en main ; glisse la souris dessus pour le faire tourner. Dans un salon, chaque joueur apparaît avec son skin et son arme, et les adversaires te voient avec ton skin en match.
 - L'administrateur peut toujours **importer ses propres modèles 3D** (voir plus bas) ; les modèles importés n'ont pas de pose pour l'arme (elle flotte près de la main).
 
@@ -135,13 +149,11 @@ Maintiens **V** pour parler. Le son passe directement entre les joueurs (WebRTC)
 - Le micro exige `http://localhost` ou une adresse **https** (le tunnel Cloudflare convient). Sur `http://192.168.x.x` on peut écouter mais pas parler.
 - Si quelqu'un n'entend rien, c'est généralement un réseau qui bloque la connexion directe : il faudrait alors un serveur TURN.
 
-## Arsenal (4 armes)
+## Inventaire et arsenal en match
 
-Depuis le salon (**🔫 Mon arsenal**) ou en jeu (menu Échap) : choisis 4 armes parmi 10, avec aperçu 3D et statistiques. Le choix est mémorisé sur ton navigateur.
+En V6, chaque opérateur commence avec un pistolet et trouve les autres armes dans les coffres. L'inventaire possède 5 emplacements ; une arme déjà possédée n'est pas ajoutée une seconde fois, et le butin est perdu à la réapparition. Le mode Course aux armes suit sa propre progression et attribue l'arme suivante après chaque élimination.
 
-Les tirs des autres joueurs sont visibles (traînées) et audibles (volume selon la distance).
-
-Chaque arme a ses propres stats (dégâts, plombs, cadence, mode auto/semi/rafale, chargeur, rechargement, dispersion, portée avec perte de dégâts, tête, recul, vitesse, zoom). **Tout se règle dans `server/src/weapons.js`** : le serveur valide chaque tir (arme autorisée, cadence, portée) et calcule les dégâts lui-même.
+Les tirs des autres joueurs sont visibles (traînées) et audibles (volume selon la distance). Chaque arme possède ses propres statistiques (dégâts, plombs, cadence, chargeur, rechargement, dispersion, portée, recul et zoom). Les définitions sont dans `server/src/weapons.js`.
 
 ## Régénération
 

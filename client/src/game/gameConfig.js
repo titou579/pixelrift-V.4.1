@@ -14,7 +14,7 @@ export function isValidLoadout(ids, config) {
     Array.isArray(ids) &&
     ids.length === 4 &&
     new Set(ids).size === 4 &&
-    ids.every((id) => config.weapons.some((w) => w.id === id))
+    ids.every((id) => config.weapons.some((w) => w.id === id && !w.loot))
   );
 }
 

@@ -82,7 +82,10 @@ app.get('/api/backup/download', requireBackupToken, (_req, res) => {
 
 app.post('/api/backup/upload', requireBackupToken, (req, res) => {
   const { players } = req.body || {};
-  if (!players || typeof players !== 'object') return res.status(400).json({ error: 'Format invalide (players attendu).' });
+  if (!players || typeof players !== 'object' || Array.isArray(players)) {
+    return res.status(400).json({ error: 'Format invalide (objet players attendu).' });
+  }
+  if (Object.keys(players).length > 500) return res.status(413).json({ error: 'Sauvegarde trop volumineuse.' });
   replaceAllPlayers(players);
   res.json({ ok: true, count: Object.keys(players).length });
 });

@@ -11,6 +11,7 @@
 //  • entrepot : Entrepôt 17 — conteneurs, rayonnages, chariots, bureaux (120 m)
 //  • survie   : Camp de survie — forêt, tentes, palissades, miradors (150 m)
 //  • toon     : Zone Toon — tranchées, barrières, épaves (110 m)
+//  • foret    : Forêt noire — variante forestière du camp, graine et palette dédiées
 // ============================================================
 import { ASSETS } from './assetCatalog.js';
 

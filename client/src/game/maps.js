@@ -12,6 +12,7 @@ export const MAPS = [
   { id: 'entrepot', name: 'Entrepôt 17', size: 'Moyenne', desc: 'Conteneurs, rayonnages, chariots élévateurs et bureaux — combats serrés (120 m).' },
   { id: 'survie', name: 'Camp de survie', size: 'Moyenne', desc: 'Forêt dense, camp palissadé et miradors en bois (150 m).' },
   { id: 'toon', name: 'Zone Toon', size: 'Petite', desc: 'Tranchées, barrières, épaves et conteneurs — action non-stop (110 m).' },
+  { id: 'foret', name: 'Forêt noire', size: 'Moyenne', desc: 'Camp forestier plus dense, clairières et miradors — combats à moyenne portée (150 m).' },
 ];
 export const DEFAULT_MAP = 'monde';
 export const MAP_IDS = MAPS.map((m) => m.id);

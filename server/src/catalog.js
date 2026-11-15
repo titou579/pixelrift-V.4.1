@@ -61,6 +61,8 @@ const BUILTIN_SKINS = [
     model: proc({ suit: 0x050507, vest: 0x020203, helmet: 0x050507, skin: 0xb88f6a, accent: 0xffb62e, glow: true }) },
   { id: 'recrue_dragon', name: 'Dragon', desc: 'Rouge laqué et or impérial.', rarity: 'legendary', price: 3500, minLevel: 14,
     model: proc({ suit: 0x8e1414, vest: 0x520b0b, helmet: 0xd4a82a, skin: 0xd9a77a, accent: 0xffd93d, glow: true }) },
+  { id: 'recrue_aurore', name: 'Aurore', desc: 'Violet profond et visière menthe lumineuse.', rarity: 'epic', price: 1800, minLevel: 8,
+    model: proc({ suit: 0x30214f, vest: 0x17112d, helmet: 0x241744, skin: 0xd9a77a, accent: 0x79f2d0, glow: true }) },
 ];
 
 // Traînées de balles (anciens « skins » de la boutique, conservés)

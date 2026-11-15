@@ -26,11 +26,26 @@ function logAdmin(user, action, detail = '') {
 
 // Limite les essais de connexion (par IP + identifiant)
 const attempts = new Map();
-function tooManyAttempts(key) {
+const ATTEMPT_WINDOW_MS = 10 * 60 * 1000;
+let attemptChecks = 0;
+function recentAttempts(key) {
   const now = Date.now();
-  const list = (attempts.get(key) || []).filter((t) => now - t < 10 * 60 * 1000);
+  const list = (attempts.get(key) || []).filter((t) => now - t < ATTEMPT_WINDOW_MS);
   attempts.set(key, list);
+  return list;
+}
+function tooManyAttempts(key) {
+  const list = recentAttempts(key);
+  if (++attemptChecks % 128 === 0) {
+    for (const [storedKey, timestamps] of attempts) {
+      if (!timestamps.some((t) => Date.now() - t < ATTEMPT_WINDOW_MS)) attempts.delete(storedKey);
+    }
+  }
   return list.length >= 8;
+}
+function recordAttempt(key) {
+  if (!attempts.has(key) && attempts.size >= 5000) attempts.delete(attempts.keys().next().value);
+  recentAttempts(key).push(Date.now());
 }
 
 const cookieOptions = () => ({
@@ -72,15 +87,22 @@ export function registerRoutes(app, game) {
 
   app.post('/api/login', (req, res) => {
     const { username, password } = req.body || {};
-    if (!username || !password) return res.status(400).json({ error: 'Requis.' });
-    const key = `${req.ip}|${String(username).toLowerCase()}`;
-    if (tooManyAttempts(key)) return res.status(429).json({ error: 'Trop d’essais. Réessaie dans quelques minutes.' });
+    if (typeof username !== 'string' || typeof password !== 'string' || !username.trim() || !password) {
+      return res.status(400).json({ error: 'Identifiant et mot de passe requis.' });
+    }
+    if (username.length > 32 || password.length > 256) return res.status(400).json({ error: 'Identifiant ou mot de passe trop long.' });
+    const ipKey = `ip|${req.ip}`;
+    const accountKey = `account|${req.ip}|${username.trim().toLowerCase()}`;
+    if (tooManyAttempts(ipKey) || tooManyAttempts(accountKey)) {
+      return res.status(429).json({ error: 'Trop d’essais. Réessaie dans quelques minutes.' });
+    }
     const r = authenticate(username, password);
     if (r.error) {
-      attempts.get(key).push(Date.now());
+      recordAttempt(ipKey);
+      recordAttempt(accountKey);
       return res.status(401).json({ error: r.error });
     }
-    attempts.delete(key);
+    attempts.delete(accountKey);
     res.cookie('session', createSession(r.user), cookieOptions());
     res.json({ user: userView(r.user) });
   });

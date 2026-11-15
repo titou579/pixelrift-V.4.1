@@ -10,6 +10,7 @@ import { getSettings } from './settings.js';
 // panneau administrateur). Les mots de passe du .env ne servent plus après.
 // ============================================================
 const DEV = process.env.NODE_ENV !== 'production';
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const envPwd = (name) => process.env[name] || (DEV ? 'pixelrift' : undefined);
 
 const SEED = [
@@ -49,10 +50,18 @@ export function initAccounts() {
     store.saveNow();
     console.log(`👤 ${added} compte(s) créé(s) depuis le .env`);
   }
-  // Nettoie les sessions des comptes supprimés
+  // Nettoie les sessions expirées ou liées à un compte supprimé.
+  const now = Date.now();
+  let sessionsChanged = false;
   for (const [t, s] of Object.entries(sessionStore.data.sessions)) {
-    if (!store.data.accounts[s.username.toLowerCase()]) delete sessionStore.data.sessions[t];
+    const username = String(s?.username || '').toLowerCase();
+    const createdAt = Number(s?.loginAt) || 0;
+    if (!username || !store.data.accounts[username] || now - createdAt >= SESSION_TTL_MS) {
+      delete sessionStore.data.sessions[t];
+      sessionsChanged = true;
+    }
   }
+  if (sessionsChanged) sessionStore.saveNow();
 }
 
 export const getAccount = (username) => store.data.accounts[String(username || '').toLowerCase()] || null;
@@ -149,11 +158,16 @@ export function createSession(user) {
 }
 
 export function getSession(token) {
-  if (!token) return null;
+  if (typeof token !== 'string' || !/^[a-f0-9]{64}$/i.test(token)) return null;
   const s = sessionStore.data.sessions[token];
   if (!s) return null;
+  const age = Date.now() - (Number(s.loginAt) || 0);
   const acc = getAccount(s.username);
-  if (!acc || acc.disabled) return null;
+  if (!acc || acc.disabled || age < 0 || age >= SESSION_TTL_MS) {
+    delete sessionStore.data.sessions[token];
+    sessionStore.save();
+    return null;
+  }
   return { username: acc.username, role: acc.role, loginAt: s.loginAt };
 }
 
@@ -175,7 +189,11 @@ export function parseCookies(header = '') {
   const out = {};
   for (const part of String(header).split(';')) {
     const i = part.indexOf('=');
-    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    if (i > 0) {
+      const key = part.slice(0, i).trim();
+      try { out[key] = decodeURIComponent(part.slice(i + 1).trim()); }
+      catch { /* cookie mal formé : on l'ignore au lieu de faire échouer la connexion */ }
+    }
   }
   return out;
 }

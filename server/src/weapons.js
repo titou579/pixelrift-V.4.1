@@ -208,7 +208,7 @@ export function rollLoot(rand = Math.random) {
   let t = rand() * total;
   let rarity = 'common';
   for (const r of Object.values(RARITIES)) { t -= r.weight; if (t <= 0) { rarity = r.id; break; } }
-  const pool = Object.values(WEAPONS).filter((w) => w.rarity === rarity && !w.starter);
+  const pool = Object.values(WEAPONS).filter((w) => w.rarity === rarity && w.loot === true);
   const w = pool[Math.floor(rand() * pool.length)];
   return { weaponId: w.id, rarity, heal: RARITIES[rarity].heal };
 }
@@ -269,7 +269,7 @@ export function isValidLoadout(ids) {
     Array.isArray(ids) &&
     ids.length >= 1 && ids.length <= 4 &&
     new Set(ids).size === ids.length &&
-    ids.every((id) => WEAPONS[id])
+    ids.every((id) => WEAPONS[id] && !WEAPONS[id].loot)
   );
 }
 

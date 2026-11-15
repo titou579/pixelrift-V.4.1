@@ -189,7 +189,7 @@ export default function Lobby({ user, roomCode: initialRoom, onPlay, onRoomChang
           <nav className="menu-list">
             <button className="menu-item primary" onClick={createRoom} disabled={connecting}>
               Créer un salon
-              <small>Solo, équipes, bots, coffres et 4 cartes</small>
+              <small>Solo, équipes, bots, coffres et 6 cartes</small>
             </button>
             <div className="menu-join">
               <input
