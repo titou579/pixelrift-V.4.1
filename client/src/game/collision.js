@@ -6,9 +6,12 @@
 
 export function createCollisionWorld(boxes, cell = 12) {
   const grid = new Map();
+  const entries = new Map();
+  let count = 0;
   const keyOf = (cx, cz) => (cx + 1024) * 2048 + (cz + 1024);
 
   function insert(b) {
+    const keys = [];
     const x0 = Math.floor(b.min.x / cell);
     const x1 = Math.floor(b.max.x / cell);
     const z0 = Math.floor(b.min.z / cell);
@@ -19,8 +22,25 @@ export function createCollisionWorld(boxes, cell = 12) {
         let arr = grid.get(k);
         if (!arr) { arr = []; grid.set(k, arr); }
         arr.push(b);
+        keys.push(k);
       }
     }
+    entries.set(b, keys);
+    count++;
+  }
+  function remove(b) {
+    const keys = entries.get(b);
+    if (!keys) return false;
+    for (const k of keys) {
+      const arr = grid.get(k);
+      if (!arr) continue;
+      const index = arr.indexOf(b);
+      if (index >= 0) arr.splice(index, 1);
+      if (!arr.length) grid.delete(k);
+    }
+    entries.delete(b);
+    count = Math.max(0, count - 1);
+    return true;
   }
   boxes.forEach(insert);
 
@@ -69,9 +89,11 @@ export function createCollisionWorld(boxes, cell = 12) {
 
   return {
     nearby,
+    add: insert,
+    remove,
     raycast: (ox, oy, oz, dx, dy, dz, maxDist) => raycast(ox, oy, oz, dx, dy, dz, maxDist).t,
     raycastHit: raycast,
-    count: boxes.length,
+    get count() { return count; },
   };
 }
 

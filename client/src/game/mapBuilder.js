@@ -82,7 +82,7 @@ function flatPlane(w, d, x, y, z) {
 }
 
 // ---------- Construction principale ----------
-export async function buildMap(scene, { spawns, mapId = 'ville', onProgress } = {}) {
+export async function buildMap(scene, { spawns, mapId = 'ville', onProgress, lowPower = false } = {}) {
   const progress = (m) => onProgress && onProgress(m);
   const layout = generateMapById(mapId, spawns);
   const MAP_HALF = layout.half;
@@ -254,6 +254,7 @@ export async function buildMap(scene, { spawns, mapId = 'ville', onProgress } = 
   const skinnedPlacements = [];
   const propRefs = new Map();      // idx du décor -> [{ im, i, m }] (pour le cacher quand il est détruit)
   const propColliders = new Map(); // idx -> collider
+  const lowDetailObjects = [];
   for (let idx = 0; idx < layout.props.length; idx++) {
     const p = layout.props[idx];
     p.idx = idx;
@@ -331,6 +332,9 @@ export async function buildMap(scene, { spawns, mapId = 'ville', onProgress } = 
       im.computeBoundingSphere();
       scene.add(im);
       disposables.push(im);
+      const assetKey = gk.split('|')[0];
+      if (['sv_grass', 'bush_small', 'bush_long', 'flowerpot', 'planter'].includes(assetKey)) lowDetailObjects.push(im);
+      im.visible = !lowPower || !lowDetailObjects.includes(im);
       drawables++;
     }
   }
@@ -413,6 +417,7 @@ export async function buildMap(scene, { spawns, mapId = 'ville', onProgress } = 
     props,
     pads: layout.pads,
     stats: { props: layout.props.length, drawables, colliders: world.count },
+    setLowPower(enabled) { for (const object of lowDetailObjects) object.visible = !enabled; },
     dispose() {
       for (const o of disposables) scene.remove(o);
     },

@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 
 // Petits effets visuels : explosion (boule de feu qui gonfle) et éclats de caisse.
-export function createFx(scene) {
+export function createFx(scene, { lowPower = false } = {}) {
   const items = [];
+  let reduced = lowPower;
   const ballGeo = new THREE.SphereGeometry(1, 16, 12);
   const chunkGeo = new THREE.BoxGeometry(0.22, 0.22, 0.22);
 
@@ -15,7 +16,7 @@ export function createFx(scene) {
     scene.add(outer, inner);
     items.push({ kind: 'ball', outer, inner, life: 0.7, max: 0.7, radius });
     // fumée / étincelles
-    for (let i = 0; i < 16; i++) chunk(x, y + 0.8, z, 0x2b2b2b, 9);
+    for (let i = 0; i < (reduced ? 5 : 16); i++) chunk(x, y + 0.8, z, 0x2b2b2b, 9);
   }
   function chunk(x, y, z, color, speed) {
     const m = new THREE.Mesh(chunkGeo, new THREE.MeshLambertMaterial({ color, transparent: true }));
@@ -26,7 +27,7 @@ export function createFx(scene) {
     items.push({ kind: 'chunk', mesh: m, vx: Math.cos(a) * s, vy: 3 + Math.random() * s * 0.6, vz: Math.sin(a) * s, life: 0.9 });
   }
   function breakProp(x, y, z) {
-    for (let i = 0; i < 10; i++) chunk(x, y + 0.5, z, [0x9b7a4b, 0xc19a5b, 0x6e5230][i % 3], 4.5);
+    for (let i = 0; i < (reduced ? 3 : 10); i++) chunk(x, y + 0.5, z, [0x9b7a4b, 0xc19a5b, 0x6e5230][i % 3], 4.5);
   }
 
   function tick(dt) {
@@ -53,5 +54,5 @@ export function createFx(scene) {
     for (const it of items) { if (it.kind === 'ball') { scene.remove(it.outer, it.inner); } else scene.remove(it.mesh); }
     items.length = 0;
   }
-  return { explosion, breakProp, tick, dispose };
+  return { explosion, breakProp, tick, dispose, setLowPower(value) { reduced = !!value; } };
 }

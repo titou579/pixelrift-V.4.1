@@ -25,6 +25,11 @@ export const DEFAULTS = {
   tab:      { x: 88, y: 9,  size: 46 },
   mic:      { x: 79, y: 9,  size: 42 },
   pause:    { x: 96, y: 9,  size: 40 },
+  build:    { x: 53, y: 10, size: 48 },
+  buildCycle: { x: 37, y: 10, size: 44 },
+  buildPlace: { x: 53, y: 23, size: 54 },
+  buildEdit: { x: 69, y: 10, size: 44 },
+  buildRemove: { x: 69, y: 23, size: 44 },
 };
 
 export function loadLayout() {
@@ -36,7 +41,7 @@ export function loadLayout() {
 }
 const saveLayout = (l) => { try { localStorage.setItem(KEY, JSON.stringify(l)); } catch { /* ignore */ } };
 
-export default function TouchControls({ api, nearChest, micMuted, editing, onDone }) {
+export default function TouchControls({ api, nearInteract, buildMode, micMuted, editing, onDone }) {
   const [layout, setLayout] = useState(loadLayout);
   const [unit, setUnit] = useState(() => Math.min(window.innerWidth, window.innerHeight) / 420);
   const [pressed, setPressed] = useState({});
@@ -190,7 +195,12 @@ export default function TouchControls({ api, nearChest, micMuted, editing, onDon
       {btn('slide', 'GLISSE', holdBtn('slide', () => api.key('KeyC', true), () => api.key('KeyC', false)))}
       {btn('reload', 'RECH.', tapBtn('reload', api.reload))}
       {btn('rift', 'RIFT', tapBtn('rift', api.rift))}
-      {btn('interact', 'OUVRIR', tapBtn('interact', api.interact), { className: `interact ${nearChest ? 'pulse' : ''}`, hidden: !nearChest })}
+      {btn('interact', 'LOOT/SOIN', tapBtn('interact', api.interact), { className: `interact ${nearInteract ? 'pulse' : ''}`, hidden: !nearInteract })}
+      {btn('build', buildMode ? 'BUILD ✓' : 'BUILD', tapBtn('build', api.buildToggle), { className: buildMode ? 'build-active' : '' })}
+      {buildMode && btn('buildCycle', 'PIÈCE', tapBtn('buildCycle', api.buildCycle))}
+      {buildMode && btn('buildPlace', 'POSER', tapBtn('buildPlace', api.buildPlace), { className: 'build-place' })}
+      {buildMode && btn('buildEdit', 'ÉDITER', tapBtn('buildEdit', api.buildEdit))}
+      {buildMode && btn('buildRemove', 'RETIRER', tapBtn('buildRemove', api.buildRemove))}
       {btn('tab', 'CARTE', tapBtn('tab', api.toggleTab))}
       {btn('mic', micMuted ? 'MUET' : 'MICRO', tapBtn('mic', api.toggleMic), { className: micMuted ? 'muted' : '' })}
       {btn('pause', 'II', tapBtn('pause', api.pause))}

@@ -28,13 +28,14 @@ function merge(dst, src, dx, dz) {
   for (const o of src.spawns || []) dst.spawns.push({ ...o, x: o.x + dx, z: o.z + dz });
   for (const o of src.pads || []) dst.pads.push(mv(o));
   for (const o of src.chests || []) dst.chests.push(mv(o));
+  for (const o of src.medkits || []) dst.medkits.push(mv(o));
   for (const o of src.hills || []) dst.hills.push(mv(o));
 }
 
 export function generateWorld() {
   const out = {
     half: WORLD_HALF, name: 'Monde Rift', groundColor: null,
-    roads: [], slabs: [], ground: [], water: [], boxes: [], props: [], spawns: [], zones: [], pads: [], chests: [], hills: [],
+    roads: [], slabs: [], ground: [], water: [], boxes: [], props: [], spawns: [], zones: [], pads: [], chests: [], medkits: [], hills: [],
   };
 
   // 1. Ville au centre
@@ -94,6 +95,7 @@ export function generateWorld() {
       for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; if (i % 4) put('sv_fence', ox + Math.cos(a) * 14, oz + Math.sin(a) * 14, -a + Math.PI / 2, { noOcc: true }); }
     }
     addChest(ox + 1.5, oz + 1.5); addChest(ox - 6, oz + 9);
+    B.out.medkits.push({ x: ox + 7, y: 0, z: oz - 7 });
     addHill(ox, oz, 7, 6);
     out.spawns.push({ x: ox + 12, y: 1.7, z: oz + 12 }, { x: ox - 12, y: 1.7, z: oz - 12 });
   }
@@ -107,6 +109,12 @@ export function generateWorld() {
     if (skip(x, z) || !B.inBounds(x, z, 20)) continue;
     if (B.out.roads.some((r) => Math.abs(x - r.x) < r.w / 2 + 6 && Math.abs(z - r.z) < r.d / 2 + 6)) continue;
     B.addChest(x, z); n++;
+  }
+  for (let i = 0, n = 0; i < 500 && n < 16; i++) {
+    const x = B.rnd(-320, 320), z = B.rnd(-320, 320);
+    if (skip(x, z) || !B.inBounds(x, z, 20)) continue;
+    if (B.out.roads.some((r) => Math.abs(x - r.x) < r.w / 2 + 6 && Math.abs(z - r.z) < r.d / 2 + 6)) continue;
+    B.out.medkits.push({ x, y: 0, z }); n++;
   }
   merge(out, B.out, 0, 0);
 

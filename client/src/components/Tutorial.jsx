@@ -33,6 +33,10 @@ const PC = [
   { title: 'Inventaire et carte (Tab)', body: (<>
     <p>Maintiens <K>Tab</K> : tu vois ton <b>équipement</b> (icônes, dégâts, cadence), la <b>carte du monde</b> avec ta position, les coffres encore fermés et la zone du mode en cours, plus le classement.</p>
     <p>Une <b>mini-carte</b> est aussi affichée en haut à gauche pendant la partie.</p></>) },
+  { title: 'Soins et construction', body: (<>
+    <p>Approche-toi d'une trousse rouge à croix blanche et appuie sur <K>F</K> pour récupérer jusqu'à <b>35 PV</b>. Elle ne se prend pas si ta santé est déjà pleine.</p>
+    <p><K>B</K> active la construction, <K>G</K> change entre mur, sol, rampe et toit, clic gauche pose la pièce, clic droit la tourne. Près de tes pièces, <K>X</K> transforme un mur en fenêtre ou porte ; <K>Retour arrière</K> le retire.</p>
+    <p className="tuto-tip">Les pièces coûtent des matériaux. Le réglage « Mode appareil modeste » réduit les détails pour les téléphones moins puissants.</p></>) },
   { title: 'Décors interactifs', body: (<>
     <p>Tire sur les décors :</p>
     <ul>
@@ -65,8 +69,12 @@ const MOBILE = [
       <li><b>MICRO</b> : couper le micro (ouvert par défaut) · <b>II</b> : pause</li>
     </ul></>) },
   { title: 'Coffres et inventaire', body: (<>
-    <p>Approche d'un coffre doré et touche <b>OUVRIR</b>. Tu obtiens une arme (4 raretés) et un peu de vie.</p>
+    <p>Approche d'un coffre doré et touche <b>LOOT/SOIN</b>. Tu obtiens une arme (4 raretés) et un peu de vie.</p>
     <p>La barre d'inventaire en bas a <b>5 emplacements</b> : touche une icône pour changer d'arme. Tu perds tout si tu meurs.</p></>) },
+  { title: 'Soins et construction', body: (<>
+    <p>Approche d'une trousse rouge et touche <b>LOOT/SOIN</b> pour récupérer jusqu'à 35 PV (si ta santé n'est pas pleine).</p>
+    <p>Touche <b>BUILD</b> pour construire, <b>PIÈCE</b> pour choisir mur/sol/rampe/toit, puis <b>POSER</b>. Oriente ton regard pour choisir la direction. <b>ÉDITER</b> transforme un mur en fenêtre ou porte ; <b>RETIRER</b> enlève ta pièce.</p>
+    <p className="tuto-tip">Dans le menu principal ou la pause, active « Mode appareil modeste » pour réduire les détails et la distance d'affichage.</p></>) },
   { title: 'Décors interactifs', body: (<>
     <p>Tire sur les <b>tonneaux, bonbonnes et voitures</b> : ils explosent et blessent autour. Les <b>caisses</b> se brisent et te redonnent un peu de vie.</p></>) },
   { title: 'Personnaliser les touches', body: (<>

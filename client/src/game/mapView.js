@@ -57,6 +57,15 @@ export function createMapView(layout) {
       ctx.strokeStyle = st.hill.color || '#58d68d'; ctx.fillStyle = 'rgba(88,214,141,0.22)'; ctx.lineWidth = 2 * s;
       ctx.beginPath(); ctx.arc(cx, cy, st.hill.r * st.pxPerM, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     }
+    for (const m of st.medkits || []) {
+      if (m.opened) continue;
+      const [mx, my] = toC(m.x, m.z);
+      if (mx < -10 || my < -10 || mx > st.w + 10 || my > st.h + 10) continue;
+      ctx.fillStyle = '#53e08b'; ctx.strokeStyle = '#123c24'; ctx.lineWidth = 1.2 * s;
+      ctx.fillRect(mx - 3 * s, my - 3 * s, 6 * s, 6 * s);
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(mx - .8 * s, my - 2.2 * s, 1.6 * s, 4.4 * s);
+      ctx.fillRect(mx - 2.2 * s, my - .8 * s, 4.4 * s, 1.6 * s);
+    }
     for (const c of st.chests || []) {
       if (c.opened) continue;
       const [cx, cy] = toC(c.x, c.z);

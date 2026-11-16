@@ -13,6 +13,8 @@ export const MAPS = [
   { id: 'survie', name: 'Camp de survie', size: 'Moyenne', desc: 'Forêt dense, camp palissadé et miradors en bois (150 m).' },
   { id: 'toon', name: 'Zone Toon', size: 'Petite', desc: 'Tranchées, barrières, épaves et conteneurs — action non-stop (110 m).' },
   { id: 'foret', name: 'Forêt noire', size: 'Moyenne', desc: 'Camp forestier plus dense, clairières et miradors — combats à moyenne portée (150 m).' },
+  { id: 'port', name: 'Port Azur', size: 'Grande', desc: 'Quais, bassin portuaire, entrepôt de pêche, conteneurs et grue de chargement.' },
+  { id: 'cratere', name: 'Cratère 9', size: 'Grande', desc: 'Carrière volcanique, passerelles suspendues, zone de forage et ravin central.' },
 ];
 export const DEFAULT_MAP = 'monde';
 export const MAP_IDS = MAPS.map((m) => m.id);

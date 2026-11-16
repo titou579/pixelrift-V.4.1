@@ -5,7 +5,8 @@ import { loadAsset, cloneModel } from './assetLoader.js';
 // COFFRES À BUTIN (façon Fortnite) : coffre doré posé au sol + faisceau lumineux visible de loin.
 // L'état (positions, ouvert / fermé) vient du serveur ; on appuie sur F à côté pour l'ouvrir.
 // ============================================================
-export function createChests(scene) {
+export function createChests(scene, { lowPower = false } = {}) {
+  let reduced = !!lowPower;
   const items = new Map();          // id -> { group, data, baseY }
   const bursts = [];                // faisceaux d'ouverture (couleur de rareté)
   let info = null;
@@ -49,6 +50,7 @@ export function createChests(scene) {
     ring.position.y = 0.04;
     const beam = new THREE.Mesh(beamGeo, beamMat);
     beam.position.y = 8;
+    beam.visible = !reduced;
     g.add(ring, beam);
     return g;
   }
@@ -112,9 +114,9 @@ export function createChests(scene) {
     t += dt;
     for (const it of items.values()) {
       if (!it.group.visible) continue;
-      it.group.rotation.y = it.baseRot + Math.sin(t * 0.8 + it.data.id) * 0.12;
+      if (!reduced) it.group.rotation.y = it.baseRot + Math.sin(t * 0.8 + it.data.id) * 0.12;
     }
-    beamMat.opacity = 0.16 + Math.sin(t * 2.2) * 0.05;
+    if (!reduced) beamMat.opacity = 0.16 + Math.sin(t * 2.2) * 0.05;
     for (let i = bursts.length - 1; i >= 0; i--) {
       const b = bursts[i];
       b.life -= dt;
@@ -131,7 +133,7 @@ export function createChests(scene) {
     bursts.length = 0;
   }
 
-  return { setState, open, respawn, nearest, list, tick, dispose };
+  return { setState, open, respawn, nearest, list, tick, dispose, setLowPower(value) { reduced = !!value; for (const it of items.values()) { const beam = it.group.children.find((o) => o.geometry === beamGeo); if (beam) beam.visible = !reduced; } } };
 }
 
 // ============================================================

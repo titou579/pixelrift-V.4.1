@@ -349,3 +349,19 @@
   .killfeed{transform:scale(.8);transform-origin:top right}
   .chest-prompt{display:none}
 }
+
+/* Mode appareil modeste + construction */
+.quality-toggle { display:flex; align-items:flex-start; gap:.8rem; padding:.85rem 1rem; margin:.5rem 0; border:1px solid rgba(255,255,255,.16); background:rgba(255,255,255,.055); cursor:pointer; text-align:left; }
+.quality-toggle input { accent-color:var(--accent); width:1.15rem; height:1.15rem; margin:.12rem 0 0; flex:none; }
+.quality-toggle span { display:flex; flex-direction:column; gap:.25rem; }
+.quality-toggle small { color:var(--muted); font-size:.72rem; line-height:1.35; }
+.build-hud { position:absolute; left:50%; bottom:7.5rem; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; gap:.2rem; padding:.55rem 1rem; min-width:220px; color:#fff; background:rgba(12,20,20,.8); border:1px solid rgba(112,230,165,.65); border-radius:8px; text-align:center; text-shadow:0 1px 3px #000; }
+.build-hud b { color:#79e8a4; font-family:var(--font-mono); letter-spacing:.14em; font-size:.78rem; }
+.build-hud span { font-weight:800; font-size:1rem; }
+.build-hud small { color:#d0ded5; font-size:.64rem; }
+.build-message { position:absolute; top:21%; left:50%; transform:translateX(-50%); padding:.55rem 1rem; border-radius:6px; color:#fff; background:rgba(140,45,40,.88); font-weight:800; }
+.tc-btn.build-active { border-color:#7ae6a3; background:rgba(30,115,74,.8); }
+.tc-btn.build-place { background:rgba(35,130,82,.9); border-color:#9cffba; }
+@media (max-width:700px) { .build-hud { bottom:5.5rem; min-width:180px; padding:.4rem .65rem; } .build-hud small { max-width:240px; font-size:.56rem; } }
+
+.quality-toggle-menu { width: min(460px, 100%); box-sizing: border-box; margin: .45rem 0 .2rem; }

@@ -52,6 +52,7 @@ export function generateMap(spawns = DEFAULT_SPAWNS, seed = 20261021) {
     zones: [],      // pour debug / minimap
     pads: [],       // zones de gravité lunaire {x,z,y,r}
     chests: [],     // coffres {x,y,z}
+    medkits: [],    // soins récupérables {x,y,z}
     hills: [],      // collines du mode Roi de la colline {x,z,r}
   };
 
@@ -516,6 +517,8 @@ export function generateMap(spawns = DEFAULT_SPAWNS, seed = 20261021) {
     line('barrier', -12, -112, 12, -112, 2.2, { road: true });
     scatter(['cone', 'bollard', 'barrier'], R, 14);
     scatter(['crate', 'box_pile', 'dumpster', 'trash_can'], R, 12);
+    // Réserve de carburant du relais : les deux types sont destructibles et explosifs.
+    scatter(['tn_barrel', 'tn_gastank'], [-48, -160, 48, -114], 8);
     scatter(['tree_c', 'tree_long', 'tree_camp'], R, 22, { sMin: 0.9, sMax: 1.2 });
     scatter(['rock', 'bush_long'], R, 14);
   }
@@ -574,7 +577,8 @@ export function generateMap(spawns = DEFAULT_SPAWNS, seed = 20261021) {
     // 14 des 20 emplacements, choisis de façon déterministe
     const keep = spots.filter((_, i) => i % 10 !== 3 && i % 10 !== 8 && i % 10 !== 5);
     for (const [x, z] of keep.slice(0, 14)) out.chests.push({ x, y: 0, z });
-    for (const [x, z] of [[135, 3.6], [-135, 3.6], [3.6, 135], [3.6, -135]]) out.chests.push({ x, y: 0, z });
+    for (const [x, z] of [[117, 3.6], [-135, 3.6], [3.6, 135], [3.6, -135]]) out.chests.push({ x, y: 0, z });
+    for (const [x, z] of [[-90, 18], [90, -18], [-18, 90], [18, -90], [150, 48], [-150, -48], [48, 150], [-48, -150]]) out.medkits.push({ x, y: 0, z });
   }
   out.hills = [[0, 18], [36, 36], [-36, -36], [72, -36], [-72, 36], [0, 72], [0, -72]].map(([x, z]) => ({ x, z, r: 7 }));
 

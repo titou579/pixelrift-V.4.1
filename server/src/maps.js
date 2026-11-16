@@ -94,7 +94,7 @@ export function getMap(id) {
   // Décale un point bloqué vers l'endroit libre le plus proche (spirale)
   const nudgeWith = (isFree) => (x, z, r) => {
     if (isFree(x, z, r)) return { x, z };
-    for (let ring = 1; ring <= 9; ring++) {
+    for (let ring = 1; ring <= 18; ring++) {
       const d = ring * 1.2;
       for (let k = 0; k < 12; k++) {
         const a = (k / 12) * Math.PI * 2;
@@ -119,6 +119,7 @@ export function getMap(id) {
     half: layout.half,
     spawns: layout.spawns.map((s) => ({ x: s.x, y: s.y ?? 1.7, z: s.z })),
     chests: layout.chests.map((c, i) => ({ id: i, x: c.x, y: c.y || 0, z: c.z })),
+    medkits: (layout.medkits || []).map((m, i) => ({ id: i, x: m.x, y: m.y || 0, z: m.z })),
     hills: layout.hills,
     grid: buildGrid(rects, circles),
     losGrid: buildGrid(losRects, []),
@@ -205,6 +206,7 @@ export function getMap(id) {
   const nudge = nudgeWith(data.isFree);
   data.spawns = data.spawns.map((s) => ({ ...s, ...nudge(s.x, s.z, 0.6) }));
   data.chests = data.chests.map((c) => ({ ...c, ...nudge(c.x, c.z, 0.7) }));
+  data.medkits = data.medkits.map((m) => ({ ...m, ...nudge(m.x, m.z, 0.6) }));
   data.hills = data.hills.map((h) => ({ ...h, ...nudge(h.x, h.z, 0.7) }));
 
   cache.set(mapId, data);

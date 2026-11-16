@@ -13,6 +13,9 @@ import { createChests, createHill } from './chests.js';
 import { createMapView } from './mapView.js';
 import { buildWeaponIcons } from './weaponIcons.js';
 import { createFx } from './fx.js';
+import { createMedkits } from './medkits.js';
+import { createBuildingSystem } from './building.js';
+import { readLowPowerPreference, writeLowPowerPreference } from './graphicsSettings.js';
 import TouchControls from '../components/TouchControls.jsx';
 import Tutorial, { tutoSeen } from '../components/Tutorial.jsx';
 import { loadCatalog, tracerById } from './catalogStore.js';
@@ -87,8 +90,15 @@ const RAR = {
   legendary: { label: 'Légendaire', color: '#ffb62e', hex: 0xffb62e },
 };
 const MODE_NAME = { ffa: 'Mêlée générale', team: 'Équipes', gungame: 'Course aux armes', koth: 'Roi de la colline' };
+const BUILD_TYPES = [
+  { id: 'wall', label: 'Mur' },
+  { id: 'floor', label: 'Sol' },
+  { id: 'ramp', label: 'Rampe' },
+  { id: 'roof', label: 'Toit' },
+];
 
 export default function GameCanvas({ user, roomCode, onExit }) {
+  const socket = getSocket();
   const canvasRef = useRef(null);
   const gameRef = useRef(null);
   const [score, setScore] = useState(0);
@@ -127,6 +137,12 @@ export default function GameCanvas({ user, roomCode, onExit }) {
   const [killTarget, setKillTarget] = useState(15);
   const [lootToast, setLootToast] = useState(null);
   const [nearChest, setNearChest] = useState(false);
+  const [nearMedkit, setNearMedkit] = useState(false);
+  const [buildMode, setBuildMode] = useState(false);
+  const [buildTypeIndex, setBuildTypeIndex] = useState(0);
+  const [buildMaterials, setBuildMaterials] = useState(100);
+  const [buildMessage, setBuildMessage] = useState('');
+  const [lowPower, setLowPower] = useState(readLowPowerPreference);
   const [koth, setKoth] = useState(null);
   const [ladder, setLadder] = useState(9);
   const [ggLevel, setGgLevel] = useState(0);
@@ -143,24 +159,30 @@ export default function GameCanvas({ user, roomCode, onExit }) {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    const socket = getSocket();
     let cancelled = false;
 
     const game = {
-      renderer: null, scene: null, camera: null, sky: null,
+      renderer: null, scene: null, camera: null, sky: null, applyQuality: null,
       player: null, weapons: null, rift: null, remotes: null, config: null, voice: null,
-      chests: null, hill: null,
+      chests: null, medkits: null, buildings: null, hill: null, mapBuild: null,
+      buildMode: false, buildTypeIndex: 0, buildRotationOffset: 0, lowPower,
       raf: null, sendState: null, timerInt: null, respawnInt: null, hudInt: null, fpsInt: null,
       handlers: {},
     };
     gameRef.current = game;
 
+    // Les états reçus avant la fin du chargement de la carte sont conservés.
+    let pendingChests = null, pendingMedkits = null, pendingProps = null, pendingBuilds = [];
+    let pendingChestRevision = 0;
+
     // --- Moteur 3D ---
-    const { renderer, scene, camera, sky } = createEngine(canvas);
+    const { renderer, scene, camera, sky, applyQuality } = createEngine(canvas, { lowPower });
     game.renderer = renderer;
     game.scene = scene;
     game.camera = camera;
     game.sky = sky;
+    game.applyQuality = applyQuality;
+    game.lowPower = lowPower;
 
     let hitTimer = null;
     let regenTimer = null;
@@ -203,9 +225,18 @@ export default function GameCanvas({ user, roomCode, onExit }) {
     const onKicked = () => onExit();
 
     // --- Coffres, butin, modes de jeu (v5) ---
-    const onChestsState = ({ chests }) => game.chests?.setState(chests);
-    const onChestOpened = ({ id, rarity }) => game.chests?.open(id, (RAR[rarity] || RAR.common).hex);
-    const onChestRespawn = ({ id }) => game.chests?.respawn(id);
+    const onChestsState = ({ chests = [] } = {}) => {
+      pendingChests = chests; pendingChestRevision++;
+      if (game.chestsReady) game.chests?.setState(chests);
+    };
+    const onChestOpened = ({ id, rarity }) => {
+      if (pendingChests) { pendingChests = pendingChests.map((c) => c.id === id ? { ...c, opened: true } : c); pendingChestRevision++; }
+      if (game.chestsReady) game.chests?.open(id, (RAR[rarity] || RAR.common).hex);
+    };
+    const onChestRespawn = ({ id }) => {
+      if (pendingChests) { pendingChests = pendingChests.map((c) => c.id === id ? { ...c, opened: false } : c); pendingChestRevision++; }
+      if (game.chestsReady) game.chests?.respawn(id);
+    };
     const onLootGranted = ({ weaponId, rarity, heal }) => {
       const tid = Date.now() + Math.random();
       setLootToast({ id: tid, name: weaponName(weaponId), rarity, heal });
@@ -232,6 +263,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
       return Math.max(0, 1 - d / ref);
     };
     const onPropDestroyed = ({ id, type, x, y, z }) => {
+      if (!game.mapProps) { pendingProps = pendingProps || []; if (!pendingProps.includes(id)) pendingProps.push(id); }
       game.mapProps?.destroy(id);
       if (type === 'explosive') {
         game.fx?.explosion(x, y, z, 7);
@@ -241,10 +273,50 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         sound.playBreak(distVol(x, z, 45));
       }
     };
-    const onPropRespawn = ({ id }) => game.mapProps?.restore(id);
-    const onPropsState = ({ destroyed }) => {
-      game.mapProps?.restoreAll();
-      for (const id of destroyed || []) game.mapProps?.destroy(id);
+    const onPropRespawn = ({ id }) => {
+      game.mapProps?.restore(id);
+      if (pendingProps) pendingProps = pendingProps.filter((value) => value !== id);
+    };
+    const onPropsState = ({ destroyed = [] } = {}) => {
+      pendingProps = destroyed;
+      if (!game.mapProps) return;
+      game.mapProps.restoreAll();
+      for (const id of destroyed) game.mapProps.destroy(id);
+    };
+    const onMedkitsState = ({ medkits = [] } = {}) => { pendingMedkits = medkits; game.medkits?.setState(medkits); };
+    const onMedkitCollected = ({ id }) => {
+      game.medkits?.collect(id);
+      if (!game.medkits && pendingMedkits) pendingMedkits = pendingMedkits.map((m) => m.id === id ? { ...m, collected: true } : m);
+    };
+    const onMedkitRespawn = ({ id }) => {
+      game.medkits?.respawn(id);
+      if (!game.medkits && pendingMedkits) pendingMedkits = pendingMedkits.map((m) => m.id === id ? { ...m, collected: false } : m);
+    };
+    const onMedkitGranted = ({ heal = 35 } = {}) => {
+      const tid = Date.now() + Math.random();
+      setLootToast({ id: tid, name: 'Trousse de soin', rarity: 'common', heal });
+      setTimeout(() => setLootToast((t) => (t && t.id === tid ? null : t)), 2800);
+    };
+    const onBuildState = ({ builds = [] } = {}) => { pendingBuilds = builds; game.buildings?.setState(builds); };
+    const onBuildAdded = ({ build }) => {
+      if (!build) return;
+      if (game.buildings) game.buildings.add(build);
+      else if (pendingBuilds) pendingBuilds = [...pendingBuilds.filter((b) => b.id !== build.id), build];
+    };
+    const onBuildUpdated = ({ build }) => {
+      if (!build) return;
+      if (game.buildings) game.buildings.update(build);
+      else pendingBuilds = [...pendingBuilds.filter((b) => b.id !== build.id), build];
+    };
+    const onBuildRemoved = ({ id }) => {
+      if (game.buildings) game.buildings.remove(id);
+      else pendingBuilds = pendingBuilds.filter((b) => b.id !== id);
+    };
+    const onBuildMaterials = ({ materials = 0 } = {}) => setBuildMaterials(materials);
+    const onBuildRejected = ({ reason } = {}) => {
+      const msg = reason === 'materials' ? 'Pas assez de matériaux' : 'Construction impossible ici';
+      setBuildMessage(msg);
+      setTimeout(() => setBuildMessage(''), 1800);
     };
 
     // Tir d'un autre joueur : traînée + son (plus faible avec la distance)
@@ -379,6 +451,16 @@ export default function GameCanvas({ user, roomCode, onExit }) {
     socket.on('prop:destroyed', onPropDestroyed);
     socket.on('prop:respawn', onPropRespawn);
     socket.on('props:state', onPropsState);
+    socket.on('medkits:state', onMedkitsState);
+    socket.on('medkit:collected', onMedkitCollected);
+    socket.on('medkit:respawn', onMedkitRespawn);
+    socket.on('medkit:granted', onMedkitGranted);
+    socket.on('build:state', onBuildState);
+    socket.on('build:added', onBuildAdded);
+    socket.on('build:updated', onBuildUpdated);
+    socket.on('build:removed', onBuildRemoved);
+    socket.on('build:materials', onBuildMaterials);
+    socket.on('build:rejected', onBuildRejected);
 
     game.handlers = {
       onConnect, onDisconnect, onPlayerJoined, onPlayerLeft, onPlayerState, onMatchEntered,
@@ -387,6 +469,8 @@ export default function GameCanvas({ user, roomCode, onExit }) {
       onPlayerWeapon, onPlayerLook, onTeamsUpdate, onKicked,
       onChestsState, onChestOpened, onChestRespawn, onLootGranted, onLoadoutForced, onLoadoutRestore, onKothState,
       onInvUpdate, onPropDestroyed, onPropRespawn, onPropsState,
+      onMedkitsState, onMedkitCollected, onMedkitRespawn, onMedkitGranted,
+      onBuildState, onBuildAdded, onBuildUpdated, onBuildRemoved, onBuildMaterials, onBuildRejected,
     };
 
     // --- Chargement ---
@@ -411,8 +495,9 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         if (roomInfo && roomInfo.state) { setMode(roomInfo.state.mode); setKillTarget(roomInfo.state.killTarget); }
         if (cancelled) return;
 
-        const { world, pads, layout, props: mapProps } = await buildMap(scene, {
+        const mapBuild = await buildMap(scene, {
           mapId,
+          lowPower,
           spawns: config.spawns,
           onProgress: (m) => {
             if (cancelled) return;
@@ -424,6 +509,8 @@ export default function GameCanvas({ user, roomCode, onExit }) {
           },
         });
         if (cancelled) return;
+        const { world, pads, layout, props: mapProps } = mapBuild;
+        game.mapBuild = mapBuild;
 
         setLoadProgress('Préparation du joueur et des armes…');
         const spawnList = layout.spawns && layout.spawns.length ? layout.spawns : config.spawns;
@@ -431,12 +518,23 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         game.player = createPlayer(camera, canvas, world, spawn, layout.half);
         game.mapProps = mapProps;
         game.mapView = createMapView(layout);
-        game.fx = createFx(scene);
+        game.fx = createFx(scene, { lowPower });
         if (isTouch) game.player.setTouchMode(true);
         game.player.setPads(pads);
         game.remotes = createRemotePlayersManager(scene);
         game.rift = createRift(scene, camera, game.player);
-        game.chests = createChests(scene);
+        game.chests = createChests(scene, { lowPower });
+        let chestRevisionApplied = -1;
+        do {
+          chestRevisionApplied = pendingChestRevision;
+          await game.chests.setState(pendingChests || []);
+        } while (chestRevisionApplied !== pendingChestRevision);
+        game.chestsReady = true;
+        game.medkits = createMedkits(scene, { lowPower });
+        await game.medkits.setState(pendingMedkits || layout.medkits.map((m, id) => ({ ...m, id, collected: false })));
+        game.buildings = createBuildingSystem(scene, world);
+        await game.buildings.setState(pendingBuilds || []);
+        if (pendingProps) { game.mapProps.restoreAll(); for (const id of pendingProps) game.mapProps.destroy(id); }
         game.hill = createHill(scene);
         game.weapons = createWeaponSystem({
           scene, camera, player: game.player, world, remotes: game.remotes,
@@ -479,22 +577,65 @@ export default function GameCanvas({ user, roomCode, onExit }) {
             setTimeout(() => setRiftReady(true), 4000);
           }
         };
-        const doOpenChest = () => {
-          if (!game.chests || !isLocked()) return;
-          const n = game.chests.nearest(camera.position, 4.5);
-          if (n && socket.connected) socket.emit('chest:open', { id: n.id });
+        const doInteract = () => {
+          if (!isLocked() || !socket.connected) return;
+          const chest = game.chests?.nearest(camera.position, 4.5);
+          const medkit = game.medkits?.nearest(camera.position, 4.5);
+          if (medkit && (!chest || medkit.dist <= chest.dist)) socket.emit('medkit:use', { id: medkit.id });
+          else if (chest) socket.emit('chest:open', { id: chest.id });
+        };
+        const currentBuildTarget = () => {
+          if (!game.player) return null;
+          const p = game.player.state.position;
+          const yaw = game.player.state.yaw + game.buildRotationOffset;
+          const snapped = Math.round(yaw / (Math.PI / 2)) * (Math.PI / 2);
+          const x = Math.round((p.x - Math.sin(snapped) * 6) / 2) * 2;
+          const z = Math.round((p.z - Math.cos(snapped) * 6) / 2) * 2;
+          const y = Math.max(0, Math.min(18, Math.round(Math.max(0, p.y - 1.7) / 3) * 3));
+          return { type: BUILD_TYPES[game.buildTypeIndex].id, x, y, z, rotation: snapped };
+        };
+        const toggleBuild = () => {
+          game.buildMode = !game.buildMode;
+          setBuildMode(game.buildMode);
+          if (!game.buildMode) game.buildings?.hidePreview();
+        };
+        const cycleBuild = () => {
+          game.buildTypeIndex = (game.buildTypeIndex + 1) % BUILD_TYPES.length;
+          setBuildTypeIndex(game.buildTypeIndex);
+        };
+        const placeBuild = () => {
+          if (!isLocked() || !game.buildMode || !socket.connected) return;
+          const target = currentBuildTarget();
+          if (target) socket.emit('build:place', target);
+        };
+        const editBuild = (remove = false) => {
+          if (!game.player || !socket.connected) return;
+          const item = game.buildings?.nearestOwned(game.player.state.position, socket.id, 8);
+          if (!item) return;
+          socket.emit(remove ? 'build:remove' : 'build:edit', { id: item.id });
         };
         game.doRift = doRift;
-        game.doOpenChest = doOpenChest;
+        game.doOpenChest = doInteract;
+        game.toggleBuild = toggleBuild;
+        game.cycleBuild = cycleBuild;
+        game.placeBuild = placeBuild;
+        game.editBuild = () => editBuild(false);
+        game.removeBuild = () => editBuild(true);
+        game.currentBuildTarget = currentBuildTarget;
         const onMouseDown = (e) => {
           if (isTouch || !isLocked() || !game.weapons) return;
+          if (game.buildMode) {
+            if (e.button === 0) placeBuild();
+            if (e.button === 2) game.buildRotationOffset = (game.buildRotationOffset + Math.PI / 2) % (Math.PI * 2);
+            return;
+          }
           if (e.button === 0) game.weapons.triggerDown();
           if (e.button === 2) game.weapons.setAds(true);
         };
         const onMouseUp = (e) => {
           if (isTouch || !game.weapons) return;
-          if (e.button === 0) game.weapons.triggerUp();
-          if (e.button === 2) game.weapons.setAds(false);
+          if (e.button === 0 && !game.buildMode) game.weapons.triggerUp();
+          if (e.button === 2 && !game.buildMode) game.weapons.setAds(false);
         };
         const onWheel = (e) => {
           if (!isLocked() || !game.weapons) return;
@@ -513,7 +654,11 @@ export default function GameCanvas({ user, roomCode, onExit }) {
             const m = /^(?:Digit|Numpad)([1-5])$/.exec(e.code);
             if (m) game.weapons.select(Number(m[1]) - 1);
           }
-          if (e.code === 'KeyF' && !e.repeat) doOpenChest();
+          if (e.code === 'KeyF' && !e.repeat) doInteract();
+          if (e.code === 'KeyB' && !e.repeat && isLocked()) toggleBuild();
+          if (e.code === 'KeyG' && !e.repeat && isLocked() && game.buildMode) cycleBuild();
+          if (e.code === 'KeyX' && !e.repeat && isLocked() && game.buildMode) editBuild(false);
+          if (e.code === 'Backspace' && !e.repeat && isLocked() && game.buildMode) { e.preventDefault(); editBuild(true); }
           if (e.code === 'KeyM' && !e.repeat && game.voice?.hasMic()) game.voice.toggleMute();
           if (e.code === 'KeyV' && !e.repeat && game.voice?.hasMic()) {
             game.voice.setTalking(true);
@@ -533,14 +678,14 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         const onLockChange = () => {
           const l = isLocked();
           setLocked(l);
-          if (!l) { game.weapons?.triggerUp(); game.weapons?.setAds(false); }
+          if (!l) { game.weapons?.triggerUp(); game.weapons?.setAds(false); game.buildMode = false; setBuildMode(false); game.buildings?.hidePreview(); }
         };
         document.addEventListener('pointerlockchange', onLockChange);
 
         const onResize = () => {
           camera.aspect = window.innerWidth / window.innerHeight;
           camera.updateProjectionMatrix();
-          renderer.setSize(window.innerWidth, window.innerHeight);
+          game.applyQuality?.(game.lowPower);
         };
         window.addEventListener('resize', onResize);
 
@@ -576,11 +721,13 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         game.hudInt = setInterval(() => {
           if (game.weapons) setWeaponHud(game.weapons.getHud());
           if (game.chests) setNearChest(!!game.chests.nearest(camera.position, 4.5));
+          if (game.medkits) setNearMedkit(!!game.medkits.nearest(camera.position, 4.5));
           if (game.mapView && game.player) {
             const ps = game.player.state;
             const st = {
               me: { x: ps.position.x, z: ps.position.z, yaw: ps.yaw },
               chests: game.chests ? game.chests.list() : [],
+              medkits: game.medkits ? game.medkits.list() : [],
               hill: game.kothState ? { x: game.kothState.x, z: game.kothState.z, r: game.kothState.r, color: game.kothState.contested ? '#e74c3c' : game.kothState.occupant ? '#ff9d1c' : '#58d68d' } : null,
               allies: [],
             };
@@ -635,6 +782,9 @@ export default function GameCanvas({ user, roomCode, onExit }) {
           game.rift.update(dt);
           game.remotes.tick(dt);
           game.chests?.tick(dt);
+          game.medkits?.tick(dt);
+          if (game.buildMode && game.buildings && game.currentBuildTarget) game.buildings.preview(game.currentBuildTarget());
+          else game.buildings?.hidePreview();
           game.fx?.tick(dt);
           sky.position.copy(camera.position);
 
@@ -696,6 +846,16 @@ export default function GameCanvas({ user, roomCode, onExit }) {
       socket.off('prop:destroyed', h.onPropDestroyed);
       socket.off('prop:respawn', h.onPropRespawn);
       socket.off('props:state', h.onPropsState);
+      socket.off('medkits:state', h.onMedkitsState);
+      socket.off('medkit:collected', h.onMedkitCollected);
+      socket.off('medkit:respawn', h.onMedkitRespawn);
+      socket.off('medkit:granted', h.onMedkitGranted);
+      socket.off('build:state', h.onBuildState);
+      socket.off('build:added', h.onBuildAdded);
+      socket.off('build:updated', h.onBuildUpdated);
+      socket.off('build:removed', h.onBuildRemoved);
+      socket.off('build:materials', h.onBuildMaterials);
+      socket.off('build:rejected', h.onBuildRejected);
 
       if (h.onMouseDown) document.removeEventListener('mousedown', h.onMouseDown);
       if (h.onMouseUp) document.removeEventListener('mouseup', h.onMouseUp);
@@ -707,6 +867,9 @@ export default function GameCanvas({ user, roomCode, onExit }) {
       if (h.onResize) window.removeEventListener('resize', h.onResize);
 
       game.chests?.dispose();
+      game.medkits?.dispose();
+      game.buildings?.dispose();
+      game.mapBuild?.dispose?.();
       game.hill?.dispose();
       game.fx?.dispose();
       game.voice?.dispose();
@@ -744,6 +907,11 @@ export default function GameCanvas({ user, roomCode, onExit }) {
     reload: () => gameRef.current?.weapons?.reload(),
     rift: () => gameRef.current?.doRift?.(),
     interact: () => gameRef.current?.doOpenChest?.(),
+    buildToggle: () => gameRef.current?.toggleBuild?.(),
+    buildCycle: () => gameRef.current?.cycleBuild?.(),
+    buildPlace: () => gameRef.current?.placeBuild?.(),
+    buildEdit: () => gameRef.current?.editBuild?.(),
+    buildRemove: () => gameRef.current?.removeBuild?.(),
     toggleTab: () => setShowScoreboard((v) => !v),
     toggleMic: () => gameRef.current?.voice?.toggleMute(),
     pause: () => {
@@ -759,6 +927,13 @@ export default function GameCanvas({ user, roomCode, onExit }) {
   const min = Math.floor(timeLeft / 60);
   const sec = String(timeLeft % 60).padStart(2, '0');
   const dead = !alive && matchStatus === 'playing';
+  const toggleLowPower = () => {
+    const next = !lowPower;
+    setLowPower(next);
+    writeLowPowerPreference(next);
+    const g = gameRef.current;
+    if (g) { g.lowPower = next; g.applyQuality?.(next); g.mapBuild?.setLowPower?.(next); g.fx?.setLowPower?.(next); g.chests?.setLowPower?.(next); g.medkits?.setLowPower?.(next); }
+  };
 
   if (mapLoading) {
     return (
@@ -791,9 +966,13 @@ export default function GameCanvas({ user, roomCode, onExit }) {
 
         <Compass heading={heading} />
 
-        {nearChest && alive && locked && (
-          <div className="chest-prompt"><span className="keycap">F</span> Ouvrir le coffre</div>
+        {(nearChest || nearMedkit) && alive && locked && !buildMode && (
+          <div className="chest-prompt"><span className="keycap">F</span> {nearMedkit && !nearChest ? 'Prendre la trousse de soin' : nearChest && nearMedkit ? 'Interagir avec le plus proche' : nearChest ? 'Ouvrir le coffre' : 'Prendre la trousse de soin'}</div>
         )}
+        {buildMode && alive && locked && (
+          <div className="build-hud"><b>CONSTRUCTION</b><span>{BUILD_TYPES[buildTypeIndex].label}</span><span>{buildMaterials} matériaux</span><small>Clic poser · G changer · clic droit tourner · X modifier · Retour arrière retirer</small></div>
+        )}
+        {buildMessage && <div className="build-message">{buildMessage}</div>}
         {lootToast && (
           <div key={lootToast.id} className="loot-toast" style={{ '--rar': (RAR[lootToast.rarity] || RAR.common).color }}>
             <small>{(RAR[lootToast.rarity] || RAR.common).label}</small>
@@ -935,7 +1114,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
         {mapRef && <canvas ref={miniRef} className="minimap" width={190} height={190} />}
 
         <div className="hud-hint">
-          Clic tirer · Clic droit viser · R recharger · 1-5 armes · F coffre · C glisser · E rift · M micro · Tab inventaire + carte
+          Clic tirer · clic droit viser · R recharger · 1-5 armes · F coffre/soin · B construction · G pièce · E rift · Tab carte
         </div>
       </div>
 
@@ -1040,6 +1219,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
             <p className="pause-sub">// EN PAUSE</p>
             <button className="menu-item primary" onClick={enterGame}>Reprendre<small>Clique n'importe où pour jouer</small></button>
             <button className="menu-item" onClick={() => setShowTuto(true)}>Tutoriel<small>Comment jouer (PC et mobile)</small></button>
+            <label className="quality-toggle"><input type="checkbox" checked={lowPower} onChange={toggleLowPower} /><span><b>Mode appareil modeste</b><small>Profil léger visé pour iPhone 7, Redmi 9 et appareils proches : distance, résolution et détails réduits.</small></span></label>
             {isTouch && <button className="menu-item" onClick={() => setTouchEdit(true)}>Personnaliser les touches<small>Déplacer, agrandir, rendre transparent</small></button>}
             <button className="menu-item" onClick={() => { const v = gameRef.current?.voice; if (v) v.setMode(voiceStatus.mode === 'ptt' ? 'open' : 'ptt'); }}>
               Micro : {voiceStatus.mode === 'ptt' ? 'appuyer pour parler (V)' : 'toujours ouvert'}<small>Clique pour changer de mode</small>
@@ -1056,7 +1236,10 @@ export default function GameCanvas({ user, roomCode, onExit }) {
             <span><span className="kbd">R</span></span><span>Recharger</span>
             <span><span className="kbd">1-5</span></span><span>Armes de l'inventaire (ou molette)</span>
             <span><span className="kbd">E</span></span><span>Rift (téléportation)</span>
-            <span><span className="kbd">F</span></span><span>Ouvrir un coffre (butin)</span>
+            <span><span className="kbd">F</span></span><span>Ouvrir un coffre / prendre un soin</span>
+            <span><span className="kbd">B · G</span></span><span>Activer la construction · changer de pièce</span>
+            <span><span className="kbd">Clic</span></span><span>Poser une pièce · clic droit pour la tourner</span>
+            <span><span className="kbd">X · Retour</span></span><span>Modifier / retirer sa construction</span>
             <span><span className="kbd">M</span></span><span>Couper / rétablir le micro</span>
             <span><span className="kbd">Tab</span></span><span>Équipement + carte + classement · <span className="kbd">F3</span> FPS</span>
           </div>
@@ -1066,7 +1249,7 @@ export default function GameCanvas({ user, roomCode, onExit }) {
       {showTuto && <Tutorial defaultMobile={isTouch} onClose={() => setShowTuto(false)} />}
 
       {isTouch && (locked || touchEdit) && !matchEnd && !showTuto && (
-        <TouchControls api={touchApi} nearChest={nearChest && alive} micMuted={!!voiceStatus.muted} editing={touchEdit} onDone={() => setTouchEdit(false)} />
+        <TouchControls api={touchApi} nearInteract={(nearChest || nearMedkit) && alive} buildMode={buildMode} micMuted={!!voiceStatus.muted} editing={touchEdit} onDone={() => setTouchEdit(false)} />
       )}
 
       {showCredits && (

@@ -24,6 +24,30 @@ import { getMap, MAPS, DEFAULT_MAP, MAP_IDS } from './maps.js';
 import { BOT_LEVELS, MAX_BOTS, createBot, equipBot, resetBot, tickBots } from './bots.js';
 import { validatePlayerState } from './validation.js';
 
+
+function blockedByPlayerBuilds(builds, position) {
+  const feet = position.y - 1.7;
+  const head = position.y + 0.15;
+  for (const b of builds || []) {
+    if (b.type === 'ramp') continue; // la rampe est franchissable ; les marches client assurent l'ascension
+    const dx = position.x - b.x, dz = position.z - b.z;
+    const c = Math.cos(b.rotation || 0), s = Math.sin(b.rotation || 0);
+    const localX = dx * c - dz * s;
+    const localZ = dx * s + dz * c;
+    if (Math.abs(localZ) > 0.65 || Math.abs(localX) > 2.45) continue;
+    if (b.type === 'wall') {
+      if (head <= b.y || feet >= b.y + 3.1) continue;
+      if (b.variant === 'door' && Math.abs(localX) < 1.18 && feet >= b.y && head <= b.y + 2.52) continue;
+      return true;
+    }
+    if (b.type === 'floor' || b.type === 'roof') {
+      if (Math.abs(localX) > 2.1 || Math.abs(localZ) > 2.1) continue;
+      if (feet < b.y + 0.26 && head > b.y + 0.02) return true;
+    }
+  }
+  return false;
+}
+
 const rooms = new Map();
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const MATCH_DURATION = 5 * 60 * 1000;
@@ -63,6 +87,9 @@ function createRoom(hostId) {
     botSeq: 0,
     chestsOn: true,
     chests: [],
+    medkits: [],
+    builds: [],
+    buildSeq: 0,
     koth: null,
     kothPts: new Map(),
     props: new Map(),      // id de décor détruit -> { respawnAt }
@@ -132,11 +159,20 @@ export function setupGameServer(io) {
 
   // ---------- Coffres ----------
   const chestsPublic = (room) => room.chests.map((c) => ({ id: c.id, x: c.x, y: c.y, z: c.z, opened: c.opened }));
+  const medkitsPublic = (room) => room.medkits.map((m) => ({ id: m.id, x: m.x, y: m.y, z: m.z, collected: m.collected }));
   function resetChests(room) {
     const map = getMap(room.map);
     room.chests = room.chestsOn && room.mode !== 'gungame'
       ? map.chests.map((c) => ({ id: c.id, x: c.x, y: c.y, z: c.z, opened: false, respawnAt: 0 }))
       : [];
+  }
+  function resetMedkits(room) {
+    const map = getMap(room.map);
+    room.medkits = (map.medkits || []).map((m) => ({ id: m.id, x: m.x, y: m.y, z: m.z, collected: false, respawnAt: 0 }));
+  }
+  function resetBuilds(room) {
+    room.builds = []; room.buildSeq = 0;
+    for (const p of room.players.values()) if (!p.isBot) p.materials = 100;
   }
   function openChest(code, room, p, chest) {
     if (!chest || chest.opened || !p.alive) return false;
@@ -306,6 +342,8 @@ export function setupGameServer(io) {
     room.kothPts.clear();
     room.teamKills = [0, 0];
     resetChests(room);
+    resetMedkits(room);
+    resetBuilds(room);
     room.koth = null;
     room.props.clear(); room.propHp.clear();
     if (room.mode === 'koth') rotateHill(room);
@@ -334,6 +372,9 @@ export function setupGameServer(io) {
       ladder: GG_LADDER.length,
     });
     io.to(code).emit('chests:state', { chests: chestsPublic(room) });
+    io.to(code).emit('medkits:state', { medkits: medkitsPublic(room) });
+    io.to(code).emit('build:state', { builds: room.builds });
+    for (const p of room.players.values()) if (!p.isBot) io.to(p.id).emit('build:materials', { materials: p.materials || 0 });
     io.to(code).emit('props:state', { destroyed: [] });
     if (room.koth) io.to(code).emit('koth:state', kothPublic(room));
     broadcastScores(code);
@@ -395,6 +436,8 @@ export function setupGameServer(io) {
       room.matchStatus = 'waiting';
       room.koth = null;
       resetChests(room);
+      resetMedkits(room);
+      resetBuilds(room);
       const map = getMap(room.map);
       const taken = [];
       for (const p of room.players.values()) {
@@ -408,6 +451,9 @@ export function setupGameServer(io) {
         resetInventory(code, p);
       }
       io.to(code).emit('match:reset');
+      io.to(code).emit('medkits:state', { medkits: medkitsPublic(room) });
+      io.to(code).emit('build:state', { builds: room.builds });
+      for (const p of room.players.values()) if (!p.isBot) io.to(p.id).emit('build:materials', { materials: p.materials || 0 });
       broadcastRoom(code);
       if (canStart(room)) startMatch(code);
     }, END_SCREEN_DURATION);
@@ -427,6 +473,9 @@ export function setupGameServer(io) {
       if (room.matchStatus !== 'playing') continue;
       for (const c of room.chests) {
         if (c.opened && now >= c.respawnAt) { c.opened = false; io.to(code).emit('chest:respawn', { id: c.id }); }
+      }
+      for (const m of room.medkits) {
+        if (m.collected && now >= m.respawnAt) { m.collected = false; io.to(code).emit('medkit:respawn', { id: m.id }); }
       }
       for (const [pid, st] of Array.from(room.props)) {
         if (now >= st.respawnAt) { room.props.delete(pid); room.propHp.delete(pid); io.to(code).emit('prop:respawn', { id: pid }); }
@@ -783,6 +832,9 @@ export function setupGameServer(io) {
           timeLeft: MATCH_DURATION - (Date.now() - room.matchStartTime), ladder: GG_LADDER.length,
         });
         socket.emit('chests:state', { chests: chestsPublic(room) });
+        socket.emit('medkits:state', { medkits: medkitsPublic(room) });
+        socket.emit('build:state', { builds: room.builds });
+        socket.emit('build:materials', { materials: p.materials || 0 });
         socket.emit('props:state', { destroyed: destroyedList(room) });
         if (room.koth) socket.emit('koth:state', kothPublic(room));
         if (room.mode === 'gungame') giveGungameWeapon(room, code, p); else resetInventory(code, p);
@@ -807,7 +859,7 @@ export function setupGameServer(io) {
       const elapsed = p.lastStateAt ? now - p.lastStateAt : now - (p.lastSeen || now);
       const riftAllowance = p.riftMoveUntil >= now ? 9.5 : 0;
       const state = validatePlayerState(getMap(room.map), p.position, position, rotation, elapsed, riftAllowance);
-      if (!state) return;
+      if (!state || blockedByPlayerBuilds(room.builds, state.position)) return;
       p.position = state.position;
       p.rotation = state.rotation;
       p.lastStateAt = now;
@@ -856,6 +908,78 @@ export function setupGameServer(io) {
       openChest(code, room, p, chest);
     });
 
+    // Trousse de soin : collecte serveur, réapparition temporisée et santé plafonnée.
+    socket.on('medkit:use', ({ id } = {}) => {
+      const { room, p, code } = me();
+      if (!room || !p || !p.inGame || !p.alive || room.matchStatus !== 'playing' || !Number.isInteger(id)) return;
+      if (p.hp >= PLAYER_MAX_HP - 1) return;
+      const item = room.medkits.find((m) => m.id === id);
+      if (!item || item.collected || Math.hypot(item.x - p.position.x, item.z - p.position.z) > 5) return;
+      item.collected = true;
+      item.respawnAt = Date.now() + 55000;
+      p.hp = Math.min(PLAYER_MAX_HP, p.hp + 35);
+      io.to(code).emit('medkit:collected', { id: item.id, by: p.id });
+      io.to(code).emit('player:hp', { id: p.id, hp: Math.round(p.hp), regen: true });
+      if (!p.isBot) io.to(p.id).emit('medkit:granted', { heal: 35, hp: Math.round(p.hp) });
+    });
+
+    // Construction légère : plans validés par le serveur, ressources et édition réservée au propriétaire.
+    socket.on('build:place', (payload = {}) => {
+      const { room, p, code } = me();
+      if (!room || !p || !p.inGame || !p.alive || room.matchStatus !== 'playing') return;
+      const allowed = new Set(['wall', 'floor', 'ramp', 'roof']);
+      const { type, x, y, z, rotation } = payload;
+      if (!allowed.has(type) || ![x, y, z, rotation].every(Number.isFinite)) return;
+      if ((p.materials || 0) < 10) { io.to(p.id).emit('build:rejected', { reason: 'materials' }); return; }
+      if (room.builds.length >= 120 || room.builds.filter((b) => b.ownerId === p.id).length >= 24) { io.to(p.id).emit('build:rejected', { reason: 'limit' }); return; }
+      const map = getMap(room.map);
+      const px = Math.round(x / 2) * 2, pz = Math.round(z / 2) * 2;
+      const py = Math.max(0, Math.min(18, Math.round(y / 3) * 3));
+      if (Math.hypot(px - p.position.x, pz - p.position.z) > 13.5) { io.to(p.id).emit('build:rejected', { reason: 'range' }); return; }
+      if (Math.abs(px) > map.half - 4 || Math.abs(pz) > map.half - 4) { io.to(p.id).emit('build:rejected', { reason: 'bounds' }); return; }
+      if (py > 0 && type === 'wall' && p.position.y < py + 1.5) { io.to(p.id).emit('build:rejected', { reason: 'height' }); return; }
+      if (!map.isFree(px, pz, type === 'wall' ? 1.6 : 1.8)) { io.to(p.id).emit('build:rejected', { reason: 'blocked' }); return; }
+      const overlap = room.builds.some((b) => Math.abs(b.y - py) < 2.4 && Math.hypot(b.x - px, b.z - pz) < 3.2);
+      if (overlap) { io.to(p.id).emit('build:rejected', { reason: 'overlap' }); return; }
+      const build = {
+        id: ++room.buildSeq, ownerId: p.id, ownerName: p.username,
+        type, variant: type === 'wall' ? 'solid' : 'default',
+        x: px, y: py, z: pz, rotation: Math.round(rotation / (Math.PI / 2)) * (Math.PI / 2),
+        health: type === 'wall' ? 260 : 220,
+      };
+      p.materials -= 10;
+      room.builds.push(build);
+      io.to(code).emit('build:added', { build });
+      io.to(p.id).emit('build:materials', { materials: p.materials });
+    });
+
+    socket.on('build:edit', ({ id } = {}) => {
+      const { room, p, code } = me();
+      if (!room || !p || !p.inGame || !p.alive || room.matchStatus !== 'playing' || !Number.isInteger(id)) return;
+      const b = room.builds.find((item) => item.id === id && item.ownerId === p.id);
+      if (!b || Math.hypot(b.x - p.position.x, b.z - p.position.z) > 8) return;
+      if (b.type === 'wall') {
+        const variants = ['solid', 'window', 'door'];
+        b.variant = variants[(variants.indexOf(b.variant) + 1) % variants.length];
+      } else {
+        b.rotation = (b.rotation + Math.PI / 2) % (Math.PI * 2);
+      }
+      io.to(code).emit('build:updated', { build: b });
+    });
+
+    socket.on('build:remove', ({ id } = {}) => {
+      const { room, p, code } = me();
+      if (!room || !p || !p.inGame || !p.alive || room.matchStatus !== 'playing' || !Number.isInteger(id)) return;
+      const index = room.builds.findIndex((item) => item.id === id && item.ownerId === p.id);
+      if (index < 0) return;
+      const b = room.builds[index];
+      if (Math.hypot(b.x - p.position.x, b.z - p.position.z) > 8) return;
+      room.builds.splice(index, 1);
+      p.materials = Math.min(150, (p.materials || 0) + 5);
+      io.to(code).emit('build:removed', { id });
+      io.to(p.id).emit('build:materials', { materials: p.materials });
+    });
+
     // Tir sur un décor destructible (le client détecte l'impact, le serveur compte les coups)
     socket.on('prop:hit', ({ id } = {}) => {
       const { room, p, code } = me();
@@ -867,7 +991,7 @@ export function setupGameServer(io) {
       p.propTokens -= 1;
       const d = getMap(room.map).destructibles.get(id);
       if (!d || room.props.has(id)) return;
-      if (Math.hypot(d.x - p.position.x, d.z - p.position.z) > 230) return;
+      if (Math.hypot(d.x - p.position.x, d.z - p.position.z) > 85) return;
       const hp = (room.propHp.has(id) ? room.propHp.get(id) : d.hp) - 1;
       room.propHp.set(id, hp);
       if (hp <= 0) destroyProp(code, room, id, p);

@@ -1,6 +1,6 @@
 # 🌌 PIXELRIFT
 
-**Version 6.1** — mini battle royale 3D jouable dans le navigateur, avec une mécanique signature : le **Rift**, un mini-portail de déplacement à courte portée.
+**Version 6.2** — mini battle royale 3D jouable dans le navigateur, avec une mécanique signature : le **Rift**, un mini-portail de déplacement à courte portée.
 
 ## Lancer le jeu sur ton PC
 
@@ -30,16 +30,28 @@ Pas besoin de GitHub ni de Render pour jouer. Les profils de progression sont sa
 
 ## ✨ Nouveautés v6
 
-- **6 cartes jouables** : Monde Rift (immense), Ville Rift, Entrepôt 17, Camp de survie, Zone Toon et Forêt noire.
-- **Monde Rift** (carte par défaut, 690 m) : la Ville Rift, l'Entrepôt 17, la Zone Toon, le Camp de survie et une Forêt noire sont **réunis sur une seule carte**, reliés par des routes de ceinture, avec 4 avant-postes, des forêts et 87 coffres. Les 5 cartes plus petites restent choisissables pour des parties rapides : Ville Rift, Entrepôt 17, Camp de survie, Zone Toon et Forêt noire. Code : `client/src/game/world.js`.
+- **8 cartes jouables** : Monde Rift, Ville Rift, Entrepôt 17, Camp de survie, Zone Toon, Forêt noire, Port Azur et Cratère 9.
+- **Monde Rift** (carte par défaut, 690 m) : la Ville Rift, l'Entrepôt 17, la Zone Toon, le Camp de survie et une Forêt noire sont **réunis sur une seule carte**, reliés par des routes de ceinture, avec 4 avant-postes, des forêts et 87 coffres et des trousses de soin. Les sept cartes dédiées restent choisissables pour des parties rapides : Ville Rift, Entrepôt 17, Camp de survie, Zone Toon, Forêt noire, Port Azur et Cratère 9. Code : `client/src/game/world.js`.
 - **Plus d'arsenal : tout vient des coffres.** On démarre avec un pistolet ; 5 emplacements d'inventaire ; 23 armes au total (10 armes de base et 13 armes de butin) réparties en 4 raretés ; le butin est perdu à la mort. Barre d'inventaire avec icônes d'armes (rendues automatiquement depuis les modèles 3D, `weaponIcons.js`).
 - **Tab** : équipement, carte du monde (coffres fermés, ta position, zone du mode), classement. **Mini-carte** en jeu.
 - **Décors interactifs** (`destructibles.js`, table partagée client/serveur) : tonneaux, bonbonnes et voitures explosent (dégâts de zone, réaction en chaîne) ; caisses, boîtes et pots se brisent ; tout réapparaît après 2 minutes. Les tentes sont traversables ; les troncs d'arbres sont fins ; hitbox resserrées.
 - **14 nouveaux skins** dans la boutique (commun → légendaire), dont Aurore ajouté en V6.1.
-- **Mobile** : joystick, regard au doigt, boutons (tir, viser, saut, glisse, recharger, rift, coffre, carte, micro, pause), taille adaptée automatiquement à l'écran, **boutons déplaçables** (menu pause → Personnaliser les touches : taille, transparence, réinitialisation), plein écran + paysage. Code : `components/TouchControls.jsx`.
+- **Mobile** : joystick, regard au doigt, tir, visée, saut, glisse, rechargement, rift, interactions, construction, carte, micro, pause, taille adaptée automatiquement à l'écran, **boutons déplaçables** (menu pause → Personnaliser les touches : taille, transparence, réinitialisation), plein écran + paysage. Code : `components/TouchControls.jsx`.
 - **Tutoriel** PC et mobile : à la première partie, puis depuis le salon et le menu pause.
 
 - **Inventaire** : le joueur commence avec un pistolet ; les autres armes sont obtenues dans les coffres, jusqu'à 5 emplacements.
+
+### Nouveautés V6.2 — contenu et jouabilité
+
+- **Coffres garantis visibles** : l'état des coffres reçu pendant le chargement de la scène est maintenant mis en attente puis appliqué une fois les modèles prêts. Les ouvertures et réapparitions pendant ce chargement sont également mémorisées.
+- **Trousses de soin** : trousses rouges à croix blanche, visibles sur les cartes, indiquées sur la mini-carte et la carte complète. Une trousse restaure jusqu'à 35 PV si la santé n'est pas pleine et revient après 55 s.
+- **Deux cartes originales** : *Port Azur* (quais, bassin d'eau, entrepôt de pêche, conteneurs, grue et zone de marché) et *Cratère 9* (carrière, cuvette centrale, trois passerelles, zone de forage et camp de maintenance). Elles ont leurs propres plans, volumes, apparitions, coffres, soins et décors destructibles. Les points d'apparition et de loot sont contrôlés contre les obstacles et les zones d'eau.
+- **Construction / édition** : 100 matériaux au début du match ; mur, sol, rampe et toit coûtent 10 matériaux. Les murs peuvent être convertis en mur plein, fenêtre ou porte ; les autres pièces peuvent être tournées. Seul le propriétaire peut modifier ou retirer sa pièce. Retirer une pièce rend 5 matériaux. Limites serveur : 24 pièces par joueur, 120 par salon.
+- **Six modèles 3D PixelRift** inclus dans `client/public/models/build/` : mur plein, fenêtre, porte, dalle de sol, rampe et toit en bois low-poly. Aucun téléchargement externe nécessaire.
+- **Mode appareil modeste** : case à cocher dans le menu principal et le menu pause. Profil de référence visé : iPhone 7, Redmi 9 et appareils proches (sans validation sur ces téléphones réels). Réduit la distance de rendu (caméra 390 m / brouillard 155 m), plafonne la résolution interne à 0,9×, masque les petites plantes/détails et réduit les particules d'effets. Le réglage est conservé sur l'appareil ; il est activé par défaut sur les écrans tactiles si aucun choix n'a été enregistré.
+- **Décors explosifs** : les tonneaux, bonbonnes et voitures conservent les explosions et réactions en chaîne existantes. La validation serveur du signal de tir sur décor est rapprochée pour empêcher les interactions très éloignées.
+- **Construction synchronisée** : les objets et leurs collisions sont transmis à tous les joueurs ; l'autorité serveur contrôle les matériaux, les limites et les modifications.
+- `npm test` couvre maintenant les 8 cartes, les trousses de soin, les six modèles 3D et l'ajout/retrait des collisions dynamiques.
 
 ### Correctifs de maintenance V6.1
 
@@ -77,7 +89,13 @@ Ajoute la clé du modèle dans `client/src/game/destructibles.js` (`explosive` o
 | Espace / Shift | Sauter / courir |
 | C (en courant) | Glisser : élan rapide, caméra basse, fonctionne aussi pour esquiver |
 | M | Couper / rétablir le micro (le micro est **ouvert en permanence** ; mode « appuyer pour parler » avec V dans le menu pause) |
-| F | Ouvrir un coffre à butin (à moins de 4 m) |
+| F | Ouvrir un coffre / prendre une trousse de soin (à moins de 4,5 m) |
+| B | Activer / quitter le mode construction |
+| G | Changer de pièce (mur, sol, rampe, toit) |
+| Clic gauche / POSER | Placer la pièce sélectionnée |
+| Clic droit | Tourner la pièce de 90° (construction) |
+| X | Modifier sa construction (mur plein → fenêtre → porte) |
+| Retour arrière | Retirer sa construction (remboursement partiel) |
 | Tab (maintenu) | Équipement + carte + classement |
 | Clic gauche / clic droit | Tirer / viser (zoom + précision, lunette pour le sniper) |
 | R | Recharger |
@@ -180,7 +198,7 @@ Ouvre le jeu avec `?debug` (http://localhost:5173/?debug) pour voir dans la cons
 
 - Les objets sont **instanciés** par carré de 100 m (très peu d'appels de dessin) et les collisions utilisent une **grille spatiale**.
 - Le compteur affiche les FPS instantanés et la moyenne sur 10 s (rouge sous 30).
-- Si ça rame : baisse `maxPixelRatio`, `fogFar` (`client/src/game/engine.js`) ou le nombre d'arbres dans `mapLayout.js`.
+- Sur un téléphone modeste, active le réglage **Mode appareil modeste** dans le menu principal ou le menu pause. Il réduit la distance de vue, la résolution interne, certains détails végétaux et les particules. Il peut aussi être activé sur PC. Les écrans tactiles l'activent par défaut lors de la première visite, mais le choix est mémorisé.
 
 ## Crédits et sécurité
 

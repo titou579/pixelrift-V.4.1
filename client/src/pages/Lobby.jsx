@@ -6,6 +6,7 @@ import { getProfile } from '../api.js';
 import { loadCatalog, skinById } from '../game/catalogStore.js';
 import { getGameConfig } from '../game/gameConfig.js';
 import Tutorial from '../components/Tutorial.jsx';
+import { readLowPowerPreference, writeLowPowerPreference } from '../game/graphicsSettings.js';
 
 const TEAM = [
   { name: 'Alpha', cls: 'team-a' },
@@ -23,6 +24,7 @@ export default function Lobby({ user, roomCode: initialRoom, onPlay, onRoomChang
   const [catalogReady, setCatalogReady] = useState(false);
   const [weaponId, setWeaponId] = useState('pistol');
   const [showTuto, setShowTuto] = useState(false);
+  const [lowPower, setLowPower] = useState(readLowPowerPreference);
   const [announce, setAnnounce] = useState('');
   const chatBox = useRef(null);
   const [copied, setCopied] = useState(false);
@@ -189,7 +191,7 @@ export default function Lobby({ user, roomCode: initialRoom, onPlay, onRoomChang
           <nav className="menu-list">
             <button className="menu-item primary" onClick={createRoom} disabled={connecting}>
               Créer un salon
-              <small>Solo, équipes, bots, coffres et 6 cartes</small>
+              <small>Solo, équipes, bots, coffres et 8 cartes</small>
             </button>
             <div className="menu-join">
               <input
@@ -209,6 +211,10 @@ export default function Lobby({ user, roomCode: initialRoom, onPlay, onRoomChang
               Quartier général
               <small>Skins · Boutique · Pass · Quêtes · Compte{user.role === 'admin' ? ' · Admin' : ''}</small>
             </button>
+            <label className="quality-toggle quality-toggle-menu">
+              <input type="checkbox" checked={lowPower} onChange={(e) => { const value = e.target.checked; setLowPower(value); writeLowPowerPreference(value); }} />
+              <span><b>Mode appareil modeste</b><small>Profil léger visé pour iPhone 7, Redmi 9 et appareils proches.</small></span>
+            </label>
             <button className="menu-item dim" onClick={onLogout}>Déconnexion</button>
           </nav>
 

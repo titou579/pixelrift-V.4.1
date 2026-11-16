@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createSky, SKY } from './sky.js';
+import { applyGraphicsPreset } from './graphicsSettings.js';
 
 // Réglages faciles à modifier
 export const RENDER_SETTINGS = {
@@ -9,14 +10,13 @@ export const RENDER_SETTINGS = {
   fov: 75,
 };
 
-export function createEngine(canvas) {
+export function createEngine(canvas, { lowPower = false } = {}) {
   const renderer = new THREE.WebGLRenderer({
     canvas,
-    antialias: true,
-    powerPreference: 'high-performance',
+    antialias: !lowPower,
+    powerPreference: lowPower ? 'low-power' : 'high-performance',
+    precision: lowPower ? 'mediump' : 'highp',
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches) ? 1.15 : RENDER_SETTINGS.maxPixelRatio));
-  renderer.setSize(window.innerWidth, window.innerHeight);
 
   const scene = new THREE.Scene();
   const horizon = new THREE.Color(SKY.horizon);
@@ -27,7 +27,7 @@ export function createEngine(canvas) {
     RENDER_SETTINGS.fov,
     window.innerWidth / window.innerHeight,
     0.1,
-    1200
+    lowPower ? 390 : 1200
   );
 
   // Lumière du jour : ciel/sol + soleil (sans ombres portées, pour tenir les 30 fps)
@@ -37,6 +37,7 @@ export function createEngine(canvas) {
   scene.add(sun);
 
   const sky = createSky(scene);
+  applyGraphicsPreset(renderer, scene, camera, lowPower);
 
-  return { renderer, scene, camera, sky };
+  return { renderer, scene, camera, sky, applyQuality: (enabled) => applyGraphicsPreset(renderer, scene, camera, enabled) };
 }
